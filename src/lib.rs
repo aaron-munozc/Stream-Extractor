@@ -1,0 +1,92 @@
+pub mod client;
+pub mod downloader;
+pub mod error;
+pub mod kick;
+pub mod twitch;
+pub mod types;
+mod chat;
+
+use log::{debug, info, warn};
+
+pub use client::StreamClient;
+pub use error::{Error, Result};
+pub use types::{
+    DownloadOptions, Platform, ProgressPayload, StreamMetadata, StreamQuality, StreamStatus,
+};
+use crate::types::ChatOptions;
+
+pub struct Stream {
+    pub metadata: StreamMetadata,
+    client: StreamClient,
+}
+
+impl Stream {
+    pub async fn get_qualities(&self) -> Result<Vec<StreamQuality>> {
+        let url = self
+            .metadata
+            .playback_url
+            .as_ref()
+            .or(self.metadata.source.as_ref())
+            .ok_or(Error::NotFound)?;
+        downloader::get_qualities_internal(&self.client, url).await
+    }
+
+    pub async fn download_video(&self, options: DownloadOptions) -> Result<()> {
+        info!(
+            "Beginning resource acquisition pipeline on platform: {}",
+            self.metadata.platform
+        );
+        downloader::download_vod_internal(&self.client, &self.metadata, options).await
+    }
+
+    /// High-performance asynchronous Chat log extractor (exports to JSON Lines)
+    pub async fn download_chat(&self, options: ChatOptions) -> Result<()> {
+        log::info!("Beginning chat capture timeline on platform: {}", self.metadata.platform);
+        chat::download_chat_internal(&self.client, &self.metadata, options).await
+    }
+}
+
+pub async fn fetch_stream(client: &StreamClient, url: &str) -> Result<Stream> {
+    info!("Resolving engine metadata rules for target: {}", url);
+
+    let (is_twitch, twitch_id) = twitch::get_twitch_stream_info(url);
+    if is_twitch {
+        debug!(
+            "Discovered active Twitch footprint. Sub-ID: {:?}",
+            twitch_id
+        );
+        if let Some(meta) = twitch::fetch_twitch_metadata(client, twitch_id).await? {
+            return Ok(Stream {
+                metadata: meta,
+                client: client.clone(),
+            });
+        }
+        return Err(Error::NotFound);
+    }
+
+    let meta_opt = match kick::get_kick_stream_info(url) {
+        kick::KickStream::Vod(uuid) => {
+            info!("Discovered Kick VOD signature. Manifest key: {}", uuid);
+            kick::fetch_kick_video_api(client, &uuid).await?
+        }
+        kick::KickStream::Live(slug) => {
+            info!(
+                "Discovered Kick Live Channel footprint. Target profile: {}",
+                slug
+            );
+            kick::fetch_kick_channel_api(client, &slug).await?
+        }
+        kick::KickStream::Invalid => {
+            warn!("Target reference structure is un-routable: {}", url);
+            return Err(Error::InvalidUrl(url.to_string()));
+        }
+    };
+
+    match meta_opt {
+        Some(meta) => Ok(Stream {
+            metadata: meta,
+            client: client.clone(),
+        }),
+        None => Err(Error::NotFound),
+    }
+}
