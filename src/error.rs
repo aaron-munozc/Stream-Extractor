@@ -1,5 +1,3 @@
-use thiserror::Error;
-
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Network error: {0}")]
@@ -28,6 +26,8 @@ pub enum Error {
     RateLimited,
     #[error("Missing chat or video ID")]
     MissingId,
+    #[error("Http error: {0}")]
+    Http(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

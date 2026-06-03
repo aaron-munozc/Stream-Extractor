@@ -1,10 +1,9 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
-use chrono::{DateTime, Utc};
-use url::Url;
 
 // --- Download specific types ---
 
@@ -231,6 +230,17 @@ where
     }
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct KickVideoResponse {
+    pub uuid: Option<String>,
+    pub views: Option<i64>,
+    pub source: Option<String>,
+    #[serde(alias = "playbackUrl", default)]
+    pub playback_url: Option<String>,
+    #[serde(default)]
+    pub livestream: Option<Livestream>,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct Livestream {
     pub id: Option<i64>,
@@ -242,36 +252,8 @@ pub struct Livestream {
     #[serde(rename = "viewer_count", alias = "viewerCount", default)]
     pub viewer_count: Option<i64>,
     pub is_live: Option<bool>,
+    #[serde(default)]
     pub channel: Option<ChannelField>,
-}
-
-fn validate_m3u8<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let opt: Option<String> = Option::deserialize(deserializer)?;
-    match opt {
-        Some(url_str) => {
-            if let Ok(parsed) = Url::parse(&url_str) {
-                let path = parsed.path().to_lowercase();
-                if path.ends_with(".m3u8") || path.ends_with(".m3u") {
-                    return Ok(Some(url_str));
-                }
-            }
-            Ok(None)
-        }
-        None => Ok(None),
-    }
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct KickVideoResponse {
-    pub uuid: Option<String>,
-    pub views: Option<i64>,
-    #[serde(deserialize_with = "validate_m3u8")]
-    pub source: Option<String>,
-    pub playback_url: Option<String>,
-    pub livestream: Option<Livestream>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -283,6 +265,29 @@ pub struct KickChannelResponse {
     #[serde(rename = "followersCount", alias = "followers_count")]
     pub followers_count: Option<i64>,
     pub playback_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct KickClipResponse {
+    pub clip: Option<KickClipData>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct KickClipData {
+    pub title: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub views: Option<i64>,
+    pub duration: Option<f64>,
+    #[serde(rename = "created_at")]
+    pub created_at: Option<String>,
+    pub video_url: Option<String>,
+    pub channel: Option<KickClipChannel>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct KickClipChannel {
+    pub id: Option<i64>,
+    pub username: Option<String>,
 }
 
 // --------------
@@ -297,7 +302,6 @@ pub struct ChatOptions {
     pub max_retries: usize,
     pub kick_concurrency: usize,
     pub empty_cycle_threshold: usize,
-
 
     pub progress_hook: Option<ProgressCallback>,
     pub cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
@@ -373,13 +377,12 @@ pub struct MessageEnriched {
 
 impl MessageEnriched {
     pub fn from_message(msg: &Message, stream_start: DateTime<Utc>) -> Self {
-
         let created_at = DateTime::parse_from_rfc3339(&msg.created_at)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or(stream_start);
 
         let delta = created_at - stream_start;
-        let total_seconds = delta.num_seconds().max(0); // Prevent negative display artifacts
+        let total_seconds = delta.num_seconds().max(0);
 
         let h = total_seconds / 3600;
         let m = (total_seconds % 3600) / 60;

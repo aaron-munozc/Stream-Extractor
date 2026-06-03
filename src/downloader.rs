@@ -1,6 +1,5 @@
 use futures::stream::{self, StreamExt};
-use std::fs as stdfs;
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -19,13 +18,7 @@ use crate::types::{
 const RETRIES: usize = 3;
 const MAX_CONCURRENCY: usize = 16;
 
-pub async fn run_ffmpeg(args: &[&str], tmp_dir: &Path) -> Result<()> {
-    let stderr_path = tmp_dir.join("merge_stderr.log");
-    let stdout_path = tmp_dir.join("merge_stdout.log");
-
-    let stderr_file = stdfs::File::create(&stderr_path)?;
-    let stdout_file = stdfs::File::create(&stdout_path)?;
-
+pub async fn run_ffmpeg(args: &[&str]) -> Result<()> {
     #[cfg(target_family = "unix")]
     let mut cmd = {
         let mut c = Command::new("nice");
@@ -39,24 +32,19 @@ pub async fn run_ffmpeg(args: &[&str], tmp_dir: &Path) -> Result<()> {
     for arg in args {
         cmd.arg(arg);
     }
-    cmd.stdout(Stdio::from(stdout_file))
-        .stderr(Stdio::from(stderr_file));
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| Error::Ffmpeg(format!("Failed to spawn ffmpeg: {}", e)))?;
-    let status = child
-        .wait()
+    cmd.stdout(Stdio::null()).stderr(Stdio::piped());
+
+    let output = cmd
+        .output()
         .await
-        .map_err(|e| Error::Ffmpeg(format!("Error waiting for ffmpeg: {}", e)))?;
+        .map_err(|e| Error::Ffmpeg(format!("Failed to execute ffmpeg: {}", e)))?;
 
-    if status.code().unwrap_or(-1) != 0 {
-        return Err(Error::Ffmpeg(
-            async_fs::read_to_string(stderr_path)
-                .await
-                .unwrap_or_default(),
-        ));
+    if !output.status.success() {
+        let err_msg = String::from_utf8_lossy(&output.stderr).into_owned();
+        return Err(Error::Ffmpeg(err_msg));
     }
+
     Ok(())
 }
 
@@ -65,31 +53,47 @@ pub async fn get_qualities_internal(
     m3u8_url: &str,
 ) -> Result<Vec<StreamQuality>> {
     let resp = client.inner.get(m3u8_url).send().await?.bytes().await?;
-    let (_, master) = m3u8_rs::parse_master_playlist(&resp)
-        .map_err(|e| Error::PlaylistParse(format!("{:?}", e)))?;
-    let base = Url::parse(m3u8_url)?;
 
-    Ok(master
-        .variants
-        .into_iter()
-        .enumerate()
-        .filter_map(|(i, v)| {
-            let uri = if v.uri.starts_with("http") {
-                v.uri
-            } else {
-                base.join(&v.uri).ok()?.to_string()
-            };
-            Some(StreamQuality {
-                index: i,
-                uri,
-                resolution: v.resolution.map(|r| StreamResolution {
-                    width: r.width as u64,
-                    height: r.height as u64,
-                }),
-                bandwidth: Some(v.bandwidth as u64),
-            })
-        })
-        .collect())
+    match m3u8_rs::parse_playlist(&resp) {
+        Ok((_, m3u8_rs::Playlist::MasterPlaylist(master))) => {
+            let base = Url::parse(m3u8_url)?;
+            Ok(master
+                .variants
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, v)| {
+                    let uri = if v.uri.starts_with("http") {
+                        v.uri
+                    } else {
+                        let mut u = base.join(&v.uri).ok()?;
+                        if u.query().is_none() && base.query().is_some() {
+                            u.set_query(base.query());
+                        }
+                        u.to_string()
+                    };
+                    Some(StreamQuality {
+                        index: i,
+                        uri,
+                        resolution: v.resolution.map(|r| StreamResolution {
+                            width: r.width,
+                            height: r.height,
+                        }),
+                        bandwidth: Some(v.bandwidth),
+                    })
+                })
+                .collect())
+        }
+        Ok((_, m3u8_rs::Playlist::MediaPlaylist(_))) => Ok(vec![StreamQuality {
+            index: 0,
+            uri: m3u8_url.to_string(),
+            resolution: None,
+            bandwidth: None,
+        }]),
+        Err(e) => Err(Error::PlaylistParse(format!(
+            "Manifest Parsing Failed: {:?}",
+            e
+        ))),
+    }
 }
 
 pub async fn download_vod_internal(
@@ -107,15 +111,14 @@ pub async fn download_vod_internal(
             hook(payload);
         }
     };
-    report(ProgressPayload::Downloading {
-        percent: 0,
-        message: "Initializing target...".into(),
-    });
 
     let target_dir = options
         .output_dir
         .clone()
+        .or_else(dirs::download_dir)
+        .or_else(dirs::video_dir)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
     let target_name = options.output_name.clone().unwrap_or_else(|| {
         let safe_username = meta
             .username
@@ -127,36 +130,92 @@ pub async fn download_vod_internal(
     });
     let final_output_path = target_dir.join(target_name);
 
+    if m3u8_url.contains(".mp4") {
+        report(ProgressPayload::Downloading {
+            percent: 0,
+            message: "Initializing direct MP4 download...".into(),
+        });
+        let mut resp = client.inner.get(m3u8_url).send().await?;
+        if !resp.status().is_success() {
+            return Err(Error::Network(resp.error_for_status().unwrap_err()));
+        }
+
+        let total_size = resp.content_length().unwrap_or(0) as f64;
+        let mut file = async_fs::File::create(&final_output_path).await?;
+        let mut downloaded: u64 = 0;
+
+        while let Some(chunk) = resp.chunk().await? {
+            file.write_all(&chunk).await?;
+            downloaded += chunk.len() as u64;
+            if total_size > 0.0 {
+                let pct = ((downloaded as f64 / total_size) * 100.0) as i64;
+                report(ProgressPayload::Downloading {
+                    percent: pct,
+                    message: "Streaming MP4 to disk...".into(),
+                });
+            }
+        }
+        file.flush().await?;
+        report(ProgressPayload::Done);
+        return Ok(());
+    }
+
+    report(ProgressPayload::Downloading {
+        percent: 0,
+        message: "Initializing M3U8 target...".into(),
+    });
+
     let manifest_bytes = client.inner.get(m3u8_url).send().await?.bytes().await?;
-    let playlist_url = match m3u8_rs::parse_master_playlist(&manifest_bytes) {
-        Ok((_, master)) => {
-            let idx = options.quality_index.unwrap_or(0);
+    let playlist_url = match m3u8_rs::parse_playlist(&manifest_bytes) {
+        Ok((_, m3u8_rs::Playlist::MasterPlaylist(master))) => {
+            let base = Url::parse(m3u8_url)?;
             let variant = master
                 .variants
-                .get(idx)
+                .get(options.quality_index.unwrap_or(0))
                 .or(master.variants.first())
-                .ok_or(Error::InvalidQualityIndex(idx))?;
-            Url::parse(m3u8_url)?.join(&variant.uri)?
+                .ok_or(Error::PlaylistParse("No variants found".into()))?;
+
+            let mut joined = base.join(&variant.uri)?;
+            if joined.query().is_none() && base.query().is_some() {
+                joined.set_query(base.query());
+            }
+            joined
         }
-        Err(_) => Url::parse(m3u8_url)?,
+        Ok((_, m3u8_rs::Playlist::MediaPlaylist(_))) => Url::parse(m3u8_url)?,
+        Err(e) => return Err(Error::PlaylistParse(format!("Manifest Error: {:?}", e))),
     };
 
+    log::info!("Fetching Media Playlist: {}", playlist_url);
     let media_bytes = client
         .inner
-        .get(playlist_url.as_str())
+        .get(playlist_url.clone())
         .send()
         .await?
         .bytes()
         .await?;
-    let (_, playlist) = m3u8_rs::parse_media_playlist(&media_bytes)
-        .map_err(|_| Error::PlaylistParse("Invalid Media Manifest".into()))?;
 
+    let playlist = match m3u8_rs::parse_playlist(&media_bytes) {
+        Ok((_, m3u8_rs::Playlist::MediaPlaylist(p))) => p,
+        Ok((_, m3u8_rs::Playlist::MasterPlaylist(_))) => {
+            return Err(Error::PlaylistParse(
+                "Expected Media Playlist but received Master.".into(),
+            ));
+        }
+        Err(e) => {
+            let text = String::from_utf8_lossy(&media_bytes);
+            let safe_head: String = text.chars().take(150).collect();
+            return Err(Error::PlaylistParse(format!(
+                "Manifest Error: {:?} | URL: {} | Head: {}",
+                e, playlist_url, safe_head
+            )));
+        }
+    };
     let buffer = options.buffer_ms.unwrap_or(0) as f64;
-    let mut start_target = (options.start_ms.unwrap_or(0) as f64 - buffer).max(0.0);
+    let start_target = (options.start_ms.unwrap_or(0) as f64 - buffer).max(0.0);
     let end_target = options
         .end_ms
         .map(|e| e as f64 + buffer)
-        .or_else(|| meta.duration.map(|d| (start_target + (d as f64 * 1000.0))));
+        .or_else(|| meta.duration.map(|d| start_target + (d as f64 * 1000.0)));
 
     let mut selected = Vec::new();
     let mut current_ms = 0.0;
@@ -165,7 +224,7 @@ pub async fn download_vod_internal(
     for (idx, seg) in playlist.segments.iter().enumerate() {
         let dur_ms = seg.duration as f64 * 1000.0;
         let seg_end = current_ms + dur_ms;
-        if seg_end > start_target && end_target.map_or(true, |e| current_ms < e) {
+        if seg_end > start_target && end_target.is_none_or(|e| current_ms < e) {
             if first_seg_start < 0.0 {
                 first_seg_start = current_ms;
             }
@@ -189,14 +248,18 @@ pub async fn download_vod_internal(
 
     let mut paths_result = stream::iter(selected).map(|(idx, uri)| {
         let client = client.inner.clone();
-        let url = playlist_url.join(&uri).unwrap();
+        let mut url = playlist_url.join(&uri).unwrap();
+        if url.query().is_none() && playlist_url.query().is_some() {
+            url.set_query(playlist_url.query());
+        }
+
         let path = tmp_path.join(format!("{:08}.ts", idx));
         let counter = downloaded_count.clone();
         let cancel_rx = options.cancel_rx.clone();
         let report_hook = options.progress_hook.clone();
 
         async move {
-            if let Some(ref rx) = cancel_rx { if *rx.borrow() { return Err(Error::Cancelled("User requested abort".into())); } }
+            if let Some(ref rx) = cancel_rx && *rx.borrow() { return Err(Error::Cancelled("User requested abort".into())); }
             let task = async {
                 let mut attempts = 0;
                 loop {
@@ -217,7 +280,7 @@ pub async fn download_vod_internal(
                             }
                             if !failed { file.flush().await?; break Ok(()); }
                         }
-                        Err(e) if attempts < RETRIES => { attempts += 1; tokio::time::sleep(Duration::from_millis(400 * attempts as u64)).await; }
+                        Err(_e) if attempts < RETRIES => { attempts += 1; tokio::time::sleep(Duration::from_millis(400 * attempts as u64)).await; }
                         Err(e) => return Err(Error::Network(e)),
                     }
                 }
@@ -270,7 +333,7 @@ pub async fn download_vod_internal(
     ]);
 
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    if let Err(e) = run_ffmpeg(&arg_refs, &tmp_path).await {
+    if let Err(e) = run_ffmpeg(&arg_refs).await {
         report(ProgressPayload::Error {
             message: e.to_string(),
         });
