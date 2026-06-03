@@ -119,15 +119,22 @@ pub async fn download_vod_internal(
         .or_else(dirs::video_dir)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-    let target_name = options.output_name.clone().unwrap_or_else(|| {
+    let base_name = options.output_name.clone().unwrap_or_else(|| {
         let safe_username = meta
             .username
             .as_deref()
             .unwrap_or("streamer")
             .replace(|c: char| !c.is_alphanumeric(), "_");
         let id_marker = meta.vod_uuid.as_deref().unwrap_or("media");
-        format!("{}_{}_{}.mp4", meta.platform, safe_username, id_marker)
+        format!("{}_{}_{}", meta.platform, safe_username, id_marker)
     });
+
+    let target_name = if base_name.ends_with(".mp4") {
+        base_name
+    } else {
+        format!("{}.mp4", base_name)
+    };
+
     let final_output_path = target_dir.join(target_name);
 
     if m3u8_url.contains(".mp4") {

@@ -83,7 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .to_lowercase();
 
                 // --- CHAT DOWNLOAD ---
-                let chat_file = format!("{}_chat.jsonl", safe_name);
+                let chat_file = format!("{}_chat", safe_name);
                 let chat_path = output_directory.join(&chat_file);
                 let chat_opts = ChatOptions {
                     output_dir: Some(output_directory.clone()),
@@ -109,7 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("      Chat Written: {} bytes", chat_size);
 
                 // --- VIDEO DOWNLOAD ---
-                let video_file = format!("{}_video.mp4", safe_name);
+                let video_file = format!("{}_video", safe_name);
                 let video_path = output_directory.join(&video_file);
                 let video_opts = DownloadOptions {
                     output_dir: Some(output_directory.clone()),
