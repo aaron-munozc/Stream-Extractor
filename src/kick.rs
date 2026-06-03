@@ -55,7 +55,7 @@ pub(crate) fn get_kick_stream_info(url: &str) -> KickStream {
 
     KickStream::Invalid
 }
-pub async fn fetch_kick_video_api(
+pub(crate) async fn fetch_kick_video_api(
     client: &StreamClient,
     uuid: &str,
 ) -> Result<Option<StreamMetadata>> {
@@ -120,7 +120,7 @@ pub async fn fetch_kick_video_api(
     Ok(Some(meta))
 }
 
-pub async fn fetch_kick_clip_api(
+pub(crate) async fn fetch_kick_clip_api(
     client: &StreamClient,
     clip_id: &str,
 ) -> Result<Option<StreamMetadata>> {
@@ -172,7 +172,7 @@ pub async fn fetch_kick_clip_api(
     Ok(Some(meta))
 }
 
-pub async fn fetch_kick_channel_api(
+pub(crate) async fn fetch_kick_channel_api(
     client: &StreamClient,
     slug: &str,
 ) -> Result<Option<StreamMetadata>> {

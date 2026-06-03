@@ -65,12 +65,12 @@ pub(crate) struct GqlVideoTokenResponse {
 
 // ----------------- Parser & Extraction Logic -----------------
 
-pub enum TwitchStream {
+pub(crate) enum TwitchStream {
     Vod(String),
     Clip(String),
     Invalid,
 }
-pub fn get_twitch_stream_info(url: &str) -> TwitchStream {
+pub(crate) fn get_twitch_stream_info(url: &str) -> TwitchStream {
     let parsed = match Url::parse(url) {
         Ok(u) => u,
         Err(_) => return TwitchStream::Invalid,
@@ -175,7 +175,7 @@ fn build_twitch_master_m3u8(video_id: &str, token: &str, sig: &str) -> String {
     )
 }
 
-pub async fn fetch_twitch_clip_metadata(
+pub(crate) async fn fetch_twitch_clip_metadata(
     client: &StreamClient,
     clip_id: &str,
 ) -> Result<Option<StreamMetadata>> {
@@ -269,7 +269,7 @@ pub async fn fetch_twitch_clip_metadata(
         ..Default::default()
     }))
 }
-pub async fn fetch_twitch_metadata(
+pub(crate) async fn fetch_twitch_metadata(
     client: &StreamClient,
     video_id: &str,
 ) -> Result<Option<StreamMetadata>> {

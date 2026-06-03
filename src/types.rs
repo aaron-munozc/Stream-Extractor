@@ -125,12 +125,12 @@ pub struct StreamMetadata {
 // --- Kick Internal Types ---
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
-pub struct Chatroom {
+pub(crate) struct Chatroom {
     pub id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
-pub struct User {
+pub(crate) struct User {
     pub username: Option<String>,
     #[serde(alias = "profilepic", alias = "profile_pic", default)]
     pub profile_pic: Option<String>,
@@ -139,7 +139,7 @@ pub struct User {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
-pub struct Channel {
+pub(crate) struct Channel {
     #[serde(rename = "id", alias = "channel_id")]
     pub id: Option<i64>,
     pub slug: Option<String>,
@@ -155,7 +155,7 @@ pub struct Channel {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(untagged)]
-pub enum ChannelField {
+pub(crate) enum ChannelField {
     Id(i64),
     Obj(Channel),
 }
@@ -231,7 +231,7 @@ where
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct KickVideoResponse {
+pub(crate) struct KickVideoResponse {
     pub uuid: Option<String>,
     pub views: Option<i64>,
     pub source: Option<String>,
@@ -242,7 +242,7 @@ pub struct KickVideoResponse {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
-pub struct Livestream {
+pub(crate) struct Livestream {
     pub id: Option<i64>,
     pub session_title: Option<String>,
     pub start_time: Option<String>,
@@ -257,7 +257,7 @@ pub struct Livestream {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct KickChannelResponse {
+pub(crate) struct KickChannelResponse {
     pub id: Option<i64>,
     pub user: Option<User>,
     pub chatroom: Option<Chatroom>,
@@ -268,12 +268,12 @@ pub struct KickChannelResponse {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct KickClipResponse {
+pub(crate) struct KickClipResponse {
     pub clip: Option<KickClipData>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct KickClipData {
+pub(crate) struct KickClipData {
     pub title: Option<String>,
     pub thumbnail_url: Option<String>,
     pub views: Option<i64>,
@@ -285,7 +285,7 @@ pub struct KickClipData {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct KickClipChannel {
+pub(crate) struct KickClipChannel {
     pub id: Option<i64>,
     pub username: Option<String>,
 }
@@ -329,20 +329,20 @@ impl Default for ChatOptions {
 // --- Chat Data Structures ---
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Badge {
+pub(crate) struct Badge {
     pub r#type: String,
     pub text: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Identity {
+pub(crate) struct Identity {
     pub color: String,
     #[serde(default)]
     pub badges: Vec<Badge>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Sender {
+pub(crate) struct Sender {
     pub id: i64,
     pub slug: String,
     pub username: String,
@@ -350,7 +350,7 @@ pub struct Sender {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Message {
+pub(crate) struct Message {
     pub id: String,
     pub chat_id: i64,
     pub user_id: i64,
@@ -362,7 +362,7 @@ pub struct Message {
 }
 
 #[derive(Debug, Serialize, Clone)]
-pub struct MessageEnriched {
+pub(crate) struct MessageEnriched {
     pub id: String,
     pub chat_id: i64,
     pub user_id: i64,
@@ -404,12 +404,12 @@ impl MessageEnriched {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ChatData {
+pub(crate) struct ChatData {
     pub messages: Vec<Message>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ChatResponse {
+pub(crate) struct ChatResponse {
     pub data: ChatData,
     pub message: String,
 }

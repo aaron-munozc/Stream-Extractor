@@ -1,11 +1,10 @@
 mod chat;
 pub mod client;
-pub mod downloader;
-pub mod error;
-pub mod kick;
-pub mod twitch;
-pub mod types;
-
+mod downloader;
+pub mod error;  
+mod kick;
+mod twitch;
+pub mod types; 
 use log::{debug, info, warn};
 
 pub use crate::types::ChatOptions;

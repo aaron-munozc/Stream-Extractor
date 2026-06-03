@@ -18,7 +18,7 @@ use crate::types::{
 const RETRIES: usize = 3;
 const MAX_CONCURRENCY: usize = 16;
 
-pub async fn run_ffmpeg(
+pub(crate) async fn run_ffmpeg(
     args: &[&str],
     cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<()> {
@@ -65,7 +65,7 @@ pub async fn run_ffmpeg(
     Ok(())
 }
 
-pub async fn get_qualities_internal(
+pub(crate) async fn get_qualities_internal(
     client: &StreamClient,
     m3u8_url: &str,
 ) -> Result<Vec<StreamQuality>> {
@@ -113,7 +113,7 @@ pub async fn get_qualities_internal(
     }
 }
 
-pub async fn download_vod_internal(
+pub(crate) async fn download_vod_internal(
     client: &StreamClient,
     meta: &StreamMetadata,
     options: DownloadOptions,

@@ -88,7 +88,7 @@ async fn fetch_json_with_retries(
     }
 }
 
-pub async fn download_chat_internal(
+pub(crate) async fn download_chat_internal(
     client: &StreamClient,
     meta: &StreamMetadata,
     options: ChatOptions,
