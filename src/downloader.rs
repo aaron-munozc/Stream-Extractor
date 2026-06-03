@@ -18,7 +18,10 @@ use crate::types::{
 const RETRIES: usize = 3;
 const MAX_CONCURRENCY: usize = 16;
 
-pub async fn run_ffmpeg(args: &[&str]) -> Result<()> {
+pub async fn run_ffmpeg(
+    args: &[&str],
+    cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
+) -> Result<()> {
     #[cfg(target_family = "unix")]
     let mut cmd = {
         let mut c = Command::new("nice");
@@ -29,16 +32,30 @@ pub async fn run_ffmpeg(args: &[&str]) -> Result<()> {
     let mut cmd = Command::new("ffmpeg");
 
     cmd.kill_on_drop(true);
+
     for arg in args {
         cmd.arg(arg);
     }
 
     cmd.stdout(Stdio::null()).stderr(Stdio::piped());
 
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| Error::Ffmpeg(format!("Failed to execute ffmpeg: {}", e)))?;
+    let output = if let Some(mut rx) = cancel_rx {
+        tokio::select! {
+            res = cmd.output() => {
+                res.map_err(|e| Error::Ffmpeg(format!("Failed to execute ffmpeg: {}", e)))?
+            }
+            _ = async {
+                // Keep checking the channel until it flips to true
+                while rx.changed().await.is_ok() {
+                    if *rx.borrow() { break; }
+                }
+            } => {
+                return Err(Error::Cancelled("FFmpeg merging aborted by user".into()));
+            }
+        }
+    } else {
+        cmd.output().await.map_err(|e| Error::Ffmpeg(format!("Failed to execute ffmpeg: {}", e)))?
+    };
 
     if !output.status.success() {
         let err_msg = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -340,7 +357,8 @@ pub async fn download_vod_internal(
     ]);
 
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    if let Err(e) = run_ffmpeg(&arg_refs).await {
+
+    if let Err(e) = run_ffmpeg(&arg_refs, options.cancel_rx.clone()).await {
         report(ProgressPayload::Error {
             message: e.to_string(),
         });
