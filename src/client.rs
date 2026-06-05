@@ -14,6 +14,12 @@ pub struct StreamClient {
     pub cookie_jar: Arc<Jar>,
 }
 
+impl Default for StreamClient {
+    fn default() -> Self {
+        Self::new().expect("Failed to initialize default StreamClient")
+    }
+}
+
 impl StreamClient {
     pub fn new() -> Result<Self> {
         let mut headers = HeaderMap::new();

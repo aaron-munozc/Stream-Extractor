@@ -1,5 +1,5 @@
 use futures::stream::{self, StreamExt};
-use std::path::{PathBuf};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -54,7 +54,9 @@ pub(crate) async fn run_ffmpeg(
             }
         }
     } else {
-        cmd.output().await.map_err(|e| Error::Ffmpeg(format!("Failed to execute ffmpeg: {}", e)))?
+        cmd.output()
+            .await
+            .map_err(|e| Error::Ffmpeg(format!("Failed to execute ffmpeg: {}", e)))?
     };
 
     if !output.status.success() {

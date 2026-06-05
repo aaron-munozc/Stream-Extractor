@@ -1,10 +1,10 @@
 mod chat;
 pub mod client;
 mod downloader;
-pub mod error;  
+pub mod error;
 mod kick;
 mod twitch;
-pub mod types; 
+pub mod types;
 use log::{debug, info, warn};
 
 pub use crate::types::ChatOptions;
@@ -20,6 +20,12 @@ pub struct Stream {
 }
 
 impl Stream {
+    pub fn new(metadata: StreamMetadata, client: &StreamClient) -> Self {
+        Self {
+            metadata,
+            client: client.clone(),
+        }
+    }
     pub async fn get_qualities(&self) -> Result<Vec<StreamQuality>> {
         let url = self
             .metadata

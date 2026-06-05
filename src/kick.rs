@@ -10,50 +10,34 @@ use crate::types::{
     StreamMetadata, StreamStatus,
 };
 
-#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum KickStream {
-    Live(String), // Channel Slug
-    Vod(String),  // VOD UUID
-    Clip(String), // Clip ID
+    Vod(String),
+    Clip(String),
+    Live(String),
     Invalid,
 }
+
 pub(crate) fn get_kick_stream_info(url: &str) -> KickStream {
     let parsed = match Url::parse(url) {
         Ok(u) => u,
         Err(_) => return KickStream::Invalid,
     };
 
-    match parsed.host_str() {
-        Some(h) if h == "kick.com" || h == "www.kick.com" => {}
-        _ => return KickStream::Invalid,
-    };
+    if !matches!(parsed.host_str(), Some("kick.com") | Some("www.kick.com")) {
+        return KickStream::Invalid;
+    }
 
     let segments: Vec<&str> = parsed
         .path_segments()
         .map(|s| s.filter(|seg| !seg.is_empty()).collect())
         .unwrap_or_default();
 
-    if segments.is_empty() {
-        return KickStream::Invalid;
+    match segments.as_slice() {
+        ["video" | "videos", uuid, ..] => KickStream::Vod(uuid.to_string()),
+        ["clips", clip_id, ..] => KickStream::Clip(clip_id.to_string()),
+        [slug] => KickStream::Live(slug.to_string()),
+        _ => KickStream::Invalid,
     }
-
-    if let Some(pos) = segments.iter().position(|&s| s == "videos")
-        && let Some(uuid) = segments.get(pos + 1)
-    {
-        return KickStream::Vod(uuid.to_string());
-    }
-
-    if let Some(pos) = segments.iter().position(|&s| s == "clips")
-        && let Some(clip_id) = segments.get(pos + 1)
-    {
-        return KickStream::Clip(clip_id.to_string());
-    }
-
-    if segments.len() == 1 {
-        return KickStream::Live(segments[0].to_string());
-    }
-
-    KickStream::Invalid
 }
 pub(crate) async fn fetch_kick_video_api(
     client: &StreamClient,

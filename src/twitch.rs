@@ -70,45 +70,34 @@ pub(crate) enum TwitchStream {
     Clip(String),
     Invalid,
 }
+
 pub(crate) fn get_twitch_stream_info(url: &str) -> TwitchStream {
     let parsed = match Url::parse(url) {
         Ok(u) => u,
         Err(_) => return TwitchStream::Invalid,
     };
 
-    let is_twitch = parsed.host_str().is_some_and(|h| h.ends_with("twitch.tv"));
-    if !is_twitch {
-        return TwitchStream::Invalid;
-    }
+    let host = parsed.host_str();
 
     let segments: Vec<&str> = parsed
         .path_segments()
         .map(|s| s.filter(|seg| !seg.is_empty()).collect())
         .unwrap_or_default();
 
-    if let Some(pos) = segments.iter().position(|&s| s == "videos")
-        && let Some(id) = segments.get(pos + 1)
-    {
-        return TwitchStream::Vod(id.to_string());
-    }
+    // Helper to strip query params from IDs
+    let clean_id = |id: &str| id.split('?').next().unwrap_or(id).to_string();
 
-    if let Some(pos) = segments.iter().position(|&s| s == "clip")
-        && let Some(id) = segments.get(pos + 1)
-    {
-        let clean_id = id.split('?').next().unwrap_or(id);
-        return TwitchStream::Clip(clean_id.to_string());
+    match segments.as_slice() {
+        ["videos", id, ..] if host.is_some_and(|h| h.ends_with("twitch.tv")) => {
+            TwitchStream::Vod(id.to_string())
+        }
+        [_, "clip", id, ..] if host.is_some_and(|h| h.ends_with("twitch.tv")) => {
+            TwitchStream::Clip(clean_id(id))
+        }
+        [id, ..] if host == Some("clips.twitch.tv") => TwitchStream::Clip(clean_id(id)),
+        _ => TwitchStream::Invalid,
     }
-
-    if parsed.host_str() == Some("clips.twitch.tv")
-        && let Some(id) = segments.first()
-    {
-        let clean_id = id.split('?').next().unwrap_or(id);
-        return TwitchStream::Clip(clean_id.to_string());
-    }
-
-    TwitchStream::Invalid
 }
-
 async fn fetch_twitch_video_graphql(
     client: &StreamClient,
     video_id: &str,
@@ -225,24 +214,25 @@ pub(crate) async fn fetch_twitch_clip_metadata(
     if token_resp.status().is_success() {
         let token_val: serde_json::Value = token_resp.json().await?;
         if let Some(qualities) = token_val["data"]["clip"]["videoQualities"].as_array()
-            && let Some(best) = qualities.first() {
-                let source_url = best["sourceURL"].as_str().unwrap_or("");
-                let sig = token_val["data"]["clip"]["playbackAccessToken"]["signature"]
-                    .as_str()
-                    .unwrap_or("");
-                let token = token_val["data"]["clip"]["playbackAccessToken"]["value"]
-                    .as_str()
-                    .unwrap_or("");
+            && let Some(best) = qualities.first()
+        {
+            let source_url = best["sourceURL"].as_str().unwrap_or("");
+            let sig = token_val["data"]["clip"]["playbackAccessToken"]["signature"]
+                .as_str()
+                .unwrap_or("");
+            let token = token_val["data"]["clip"]["playbackAccessToken"]["value"]
+                .as_str()
+                .unwrap_or("");
 
-                if !source_url.is_empty() {
-                    mp4_url = format!(
-                        "{}?sig={}&token={}",
-                        source_url,
-                        sig,
-                        urlencoding::encode(token)
-                    );
-                }
+            if !source_url.is_empty() {
+                mp4_url = format!(
+                    "{}?sig={}&token={}",
+                    source_url,
+                    sig,
+                    urlencoding::encode(token)
+                );
             }
+        }
     }
 
     if mp4_url.is_empty() {
