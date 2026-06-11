@@ -64,12 +64,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ProgressPayload::Downloading { percent, .. } => {
                         print!("\r     [Downloading] {}% ", percent);
                         use std::io::Write;
-                        std::io::stdout().flush().unwrap();
+                        let _ = std::io::stdout().flush(); // <-- Replace .unwrap() with let _
                     }
                     ProgressPayload::Merging => {
                         print!("\r     [Ffmpeg] Stitching...                    ");
                         use std::io::Write;
-                        std::io::stdout().flush().unwrap();
+                        let _ = std::io::stdout().flush(); // <-- Replace .unwrap() with let _
                     }
                     ProgressPayload::Done => println!("\n     Task Complete!"),
                     ProgressPayload::Error { message } => {
