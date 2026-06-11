@@ -56,50 +56,46 @@ impl Stream {
 pub async fn fetch_stream(client: &StreamClient, url: &str) -> Result<Stream> {
     info!("Resolving engine metadata rules for target: {}", url);
 
-    match twitch::get_twitch_stream_info(url) {
-        twitch::TwitchStream::Vod(id) => {
-            debug!("Discovered active Twitch VOD footprint. Sub-ID: {:?}", id);
-            if let Some(meta) = twitch::fetch_twitch_metadata(client, &id).await? {
-                return Ok(Stream {
-                    metadata: meta,
-                    client: client.clone(),
-                });
-            }
-            return Err(Error::NotFound);
-        }
-        twitch::TwitchStream::Clip(id) => {
-            debug!("Discovered active Twitch Clip footprint. Clip-ID: {:?}", id);
-            if let Some(meta) = twitch::fetch_twitch_clip_metadata(client, &id).await? {
-                return Ok(Stream {
-                    metadata: meta,
-                    client: client.clone(),
-                });
-            }
-            return Err(Error::NotFound);
-        }
-        twitch::TwitchStream::Invalid => {}
-    }
+    let parsed_url = url::Url::parse(url).map_err(|_| Error::InvalidUrl(url.to_string()))?;
+    let host = parsed_url.host_str().unwrap_or("");
 
-    let meta_opt = match kick::get_kick_stream_info(url) {
-        kick::KickStream::Vod(uuid) => {
-            info!("Discovered Kick VOD signature. Manifest key: {}", uuid);
-            kick::fetch_kick_video_api(client, &uuid).await?
+    let meta_opt = if host.contains("twitch.tv") {
+        match twitch::get_twitch_stream_info(url) {
+            twitch::TwitchStream::Vod(id) => {
+                debug!("Discovered active Twitch VOD footprint. Sub-ID: {:?}", id);
+                twitch::fetch_twitch_metadata(client, &id).await?
+            }
+            twitch::TwitchStream::Clip(id) => {
+                debug!("Discovered active Twitch Clip footprint. Clip-ID: {:?}", id);
+                twitch::fetch_twitch_clip_metadata(client, &id).await?
+            }
+            twitch::TwitchStream::Invalid => {
+                warn!("Invalid Twitch URL structure: {}", url);
+                return Err(Error::InvalidUrl(url.to_string()));
+            }
         }
-        kick::KickStream::Live(slug) => {
-            info!(
-                "Discovered Kick Live Channel footprint. Target profile: {}",
-                slug
-            );
-            kick::fetch_kick_channel_api(client, &slug).await?
+    } else if host.contains("kick.com") {
+        match kick::get_kick_stream_info(url) {
+            kick::KickStream::Vod(uuid) => {
+                info!("Discovered Kick VOD signature. Manifest key: {}", uuid);
+                kick::fetch_kick_video_api(client, &uuid).await?
+            }
+            kick::KickStream::Live(slug) => {
+                info!("Discovered Kick Live Channel footprint. Target profile: {}", slug);
+                kick::fetch_kick_channel_api(client, &slug).await?
+            }
+            kick::KickStream::Clip(clip_id) => {
+                info!("Discovered Kick Clip footprint. Clip ID: {}", clip_id);
+                kick::fetch_kick_clip_api(client, &clip_id).await?
+            }
+            kick::KickStream::Invalid => {
+                warn!("Invalid Kick URL structure: {}", url);
+                return Err(Error::InvalidUrl(url.to_string()));
+            }
         }
-        kick::KickStream::Clip(clip_id) => {
-            info!("Discovered Kick Clip footprint. Clip ID: {}", clip_id);
-            kick::fetch_kick_clip_api(client, &clip_id).await?
-        }
-        kick::KickStream::Invalid => {
-            warn!("Target reference structure is un-routable: {}", url);
-            return Err(Error::InvalidUrl(url.to_string()));
-        }
+    } else {
+        warn!("Target reference structure is un-routable: {}", url);
+        return Err(Error::InvalidUrl(url.to_string()));
     };
 
     match meta_opt {
