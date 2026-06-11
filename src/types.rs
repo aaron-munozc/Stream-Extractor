@@ -34,16 +34,78 @@ pub enum ProgressPayload {
 
 pub type ProgressCallback = Arc<dyn Fn(ProgressPayload) + Send + Sync>;
 
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum QualityPreference {
+    /// Selects the variant with the highest bandwidth and resolution.
+    #[default]
+    Best,
+    /// Selects the variant with the lowest bandwidth and resolution (ideal for saving data).
+    Worst,
+    /// Selects a variant matching a specific vertical resolution height (e.g., 1080 for 1080p, 720 for 720p).
+    Height(u64),
+    /// Selects a specific variant by its explicit 0-based index from the master playlist.
+    Index(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VideoFormat {
+    #[default]
+    Mp4,
+    Mkv,
+    Mov,
+    Ts,
+}
+
+impl VideoFormat {
+    pub fn extension(&self) -> &'static str {
+        match self {
+            VideoFormat::Mp4 => "mp4",
+            VideoFormat::Mkv => "mkv",
+            VideoFormat::Mov => "mov",
+            VideoFormat::Ts => "ts",
+        }
+    }
+}
+
+
+/// Configuration options for managing the lifecycle and parameters of a stream download.
 #[derive(Clone)]
 pub struct DownloadOptions {
+    /// The directory where the downloaded media segments or final output file will be stored.
     pub output_dir: Option<PathBuf>,
+
+    /// The filename to assign to the completed download. If `None`, a default name
+    /// derived from the stream metadata is used.
     pub output_name: Option<String>,
+
+    /// The number of concurrent worker threads to allocate for downloading stream segments.
     pub threads: usize,
-    pub quality_index: Option<usize>,
+
+    /// An index representing the desired stream quality (e.g., resolution or bitrate)
+    /// as defined in the M3U8 master playlist.
+    pub quality: QualityPreference,
+
+    pub format: VideoFormat,
+
+    /// The point in the stream timeline, in milliseconds, at which the download should begin.
     pub start_ms: Option<u64>,
+
+    /// The point in the stream timeline, in milliseconds, at which the download should terminate.
     pub end_ms: Option<u64>,
+
+    /// The look-ahead or jitter buffer duration in milliseconds, used to account
+    /// for network latency and segment availability.
     pub buffer_ms: Option<u64>,
+
+    /// An optional hook invoked periodically to report download progress,
+    /// such as bytes downloaded or segment completion status.
     pub progress_hook: Option<ProgressCallback>,
+
+    /// A watch receiver used to monitor for cancellation signals. If the value
+    /// updates to `true`, the downloader will perform a graceful shutdown.
     pub cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
@@ -53,7 +115,8 @@ impl Default for DownloadOptions {
             output_dir: None,
             output_name: None,
             threads: 4,
-            quality_index: None,
+            quality: QualityPreference::Best,
+            format: VideoFormat::Mp4,
             start_ms: None,
             end_ms: None,
             buffer_ms: None,
@@ -290,23 +353,46 @@ pub(crate) struct KickClipChannel {
     pub username: Option<String>,
 }
 
-// --------------
+/// Configuration options for controlling the behavior of the Kick stream downloader.
 #[derive(Clone)]
 pub struct ChatOptions {
+    /// The directory where downloaded segments or processed files should be saved.
     pub output_dir: Option<PathBuf>,
+
+    /// The base filename to use for the output. If not provided, a default
+    /// naming convention based on the stream ID will be used.
     pub output_name: Option<String>,
+
+    /// The starting timestamp of the stream in milliseconds to begin downloading from.
     pub start_ms: Option<u64>,
+
+    /// The ending timestamp of the stream in milliseconds to stop downloading.
     pub end_ms: Option<u64>,
+
+    /// The size of the look-ahead buffer in milliseconds. Used to handle
+    /// jitter in stream segment availability.
     pub buffer_ms: Option<u64>,
 
+    /// The maximum number of attempts to download a specific segment before
+    /// marking it as failed.
     pub max_retries: usize,
+
+    /// Number of concurrent download tasks to run. Higher values improve
+    /// throughput but increase the risk of being rate-limited.
     pub kick_concurrency: usize,
+
+    /// The number of consecutive polling cycles that return no new segments
+    /// before the downloader decides the stream has ended.
     pub empty_cycle_threshold: usize,
 
+    /// A callback function invoked during the download process to report
+    /// status, progress percentage, or errors.
     pub progress_hook: Option<ProgressCallback>,
+
+    /// A watch receiver used to gracefully interrupt the download process.
+    /// If the receiver signals `true`, the downloader will attempt to stop.
     pub cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
 }
-
 impl Default for ChatOptions {
     fn default() -> Self {
         Self {
