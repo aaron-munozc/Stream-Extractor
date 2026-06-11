@@ -11,9 +11,7 @@ use url::Url;
 
 use crate::client::StreamClient;
 use crate::error::{Error, Result};
-use crate::types::{
-    DownloadOptions, ProgressPayload, StreamMetadata, StreamQuality, StreamResolution,
-};
+use crate::types::{DownloadOptions, ProgressPayload, QualityPreference, StreamMetadata, StreamQuality, StreamResolution};
 
 const RETRIES: usize = 3;
 const MAX_CONCURRENCY: usize = 16;
@@ -148,10 +146,17 @@ pub(crate) async fn download_vod_internal(
         format!("{}_{}_{}", meta.platform, safe_username, id_marker)
     });
 
-    let target_name = if base_name.ends_with(".mp4") {
+    let ext = options.format.extension();
+
+    let target_name = if base_name.ends_with(&format!(".{}", ext)) {
         base_name
     } else {
-        format!("{}.mp4", base_name)
+        let clean_base = std::path::Path::new(&base_name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&base_name);
+
+        format!("{}.{}", clean_base, ext)
     };
 
     let final_output_path = target_dir.join(target_name);
@@ -195,11 +200,31 @@ pub(crate) async fn download_vod_internal(
     let playlist_url = match m3u8_rs::parse_playlist(&manifest_bytes) {
         Ok((_, m3u8_rs::Playlist::MasterPlaylist(master))) => {
             let base = Url::parse(m3u8_url)?;
-            let variant = master
-                .variants
-                .get(options.quality_index.unwrap_or(0))
-                .or(master.variants.first())
-                .ok_or(Error::PlaylistParse("No variants found".into()))?;
+
+            let variant = match options.quality {
+                QualityPreference::Best => master
+                    .variants
+                    .iter()
+                    .max_by_key(|v| v.bandwidth),
+
+                QualityPreference::Worst => master
+                    .variants
+                    .iter()
+                    .min_by_key(|v| v.bandwidth),
+
+                QualityPreference::Height(target_height) => master
+                    .variants
+                    .iter()
+                    .filter(|v| v.resolution.map_or(false, |r| r.height == target_height))
+                    .max_by_key(|v| v.bandwidth)
+                    .or_else(|| master.variants.iter().max_by_key(|v| v.bandwidth)),
+
+                QualityPreference::Index(idx) => master
+                    .variants
+                    .get(idx),
+            }
+                .or_else(|| master.variants.first())
+                .ok_or(Error::PlaylistParse("No variants found in master playlist".into()))?;
 
             let mut joined = base.join(&variant.uri)?;
             if joined.query().is_none() && base.query().is_some() {
