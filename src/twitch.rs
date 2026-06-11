@@ -1,4 +1,5 @@
 use regex::Regex;
+use reqwest::StatusCode;
 use serde::Deserialize;
 use url::Url;
 use urlencoding::encode;
@@ -115,9 +116,13 @@ async fn fetch_twitch_video_graphql(
         .send()
         .await?;
 
-    if !resp.status().is_success() {
+    if resp.status() == StatusCode::NOT_FOUND {
         return Ok(None);
     }
+
+    let resp = resp.error_for_status()?;
+
+
     let parsed: GqlResponse = resp.json().await?;
     Ok(parsed.data.and_then(|d| d.video))
 }
@@ -181,9 +186,11 @@ pub(crate) async fn fetch_twitch_clip_metadata(
         .json(&info_body)
         .send()
         .await?;
-    if !info_resp.status().is_success() {
+    
+    if info_resp.status() == StatusCode::NOT_FOUND {
         return Ok(None);
     }
+    let info_resp = info_resp.error_for_status()?;
 
     let parsed: serde_json::Value = info_resp.json().await?;
     let clip = &parsed["data"]["clip"];
@@ -278,16 +285,10 @@ pub(crate) async fn fetch_twitch_metadata(
     let master_url = build_twitch_master_m3u8(video_id, &token_response.token, &token_response.sig);
     let master_res = client.inner.get(&master_url).send().await?;
 
-    if !master_res.status().is_success() {
-        log::error!(
-            "Twitch Usher rejected token for {}. Status: {}. Response: {}",
-            video_id,
-            master_res.status(),
-            master_res.text().await.unwrap_or_default()
-        );
+    if master_res.status() == StatusCode::NOT_FOUND {
         return Ok(None);
     }
-
+    let master_res = master_res.error_for_status()?;
     let master_text = master_res.text().await?;
     let bandwidth_re = Regex::new(r#"BANDWIDTH=(\d+)"#).unwrap();
     let mut candidate_playlists: Vec<(i64, String)> = Vec::new();
