@@ -1,8 +1,7 @@
-use reqwest::StatusCode;
 use reqwest::header::{ACCEPT, REFERER};
+use reqwest::StatusCode;
 use url::Url;
 
-use crate::Error;
 use crate::client::StreamClient;
 use crate::error::Result;
 use crate::types::{
@@ -53,9 +52,11 @@ pub(crate) async fn fetch_kick_video_api(
         .send()
         .await?;
 
-    if !resp.status().is_success() {
+    if resp.status() == StatusCode::NOT_FOUND {
         return Ok(None);
     }
+
+    let resp = resp.error_for_status()?;
 
     let parsed: KickVideoResponse = resp.json().await?;
 
@@ -118,17 +119,12 @@ pub(crate) async fn fetch_kick_clip_api(
         .send()
         .await?;
 
-    // --- STRATEGIC STATUS CODE TRIAGE ---
-    match resp.status() {
-        StatusCode::NOT_FOUND => return Ok(None),
-        status if !status.is_success() => {
-            return Err(Error::Http(format!(
-                "Kick clip API returned status: {}",
-                status
-            )));
-        }
-        _ => {}
+
+    if resp.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
     }
+
+    let resp = resp.error_for_status()?;
 
     let parsed: KickClipResponse = resp.json().await?;
 
@@ -169,9 +165,11 @@ pub(crate) async fn fetch_kick_channel_api(
         .send()
         .await?;
 
-    if !resp.status().is_success() {
+    if resp.status() == StatusCode::NOT_FOUND {
         return Ok(None);
     }
+
+    let resp = resp.error_for_status()?;
 
     let parsed: KickChannelResponse = resp.json().await?;
 
