@@ -149,6 +149,7 @@ impl fmt::Display for Platform {
 #[serde(rename_all = "lowercase")]
 pub enum StreamStatus {
     Live,
+    Clip,
     Vod,
     Offline,
 }

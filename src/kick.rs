@@ -135,7 +135,7 @@ pub(crate) async fn fetch_kick_clip_api(
 
     let meta = StreamMetadata {
         platform: Platform::Kick,
-        stream_status: Some(StreamStatus::Vod),
+        stream_status: Some(StreamStatus::Clip),
         vod_uuid: Some(clip_id.to_string()),
         title: clip.title,
         thumbnail_url: clip.thumbnail_url,
