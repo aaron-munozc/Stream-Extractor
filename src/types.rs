@@ -7,14 +7,14 @@ use std::sync::Arc;
 
 // --- Download specific types ---
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct StreamResolution {
     pub width: u64,
     pub height: u64,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct StreamQuality {
     pub index: usize,
@@ -34,18 +34,13 @@ pub enum ProgressPayload {
 
 pub type ProgressCallback = Arc<dyn Fn(ProgressPayload) + Send + Sync>;
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum QualityPreference {
-    /// Selects the variant with the highest bandwidth and resolution.
     #[default]
     Best,
-    /// Selects the variant with the lowest bandwidth and resolution (ideal for saving data).
     Worst,
-    /// Selects a variant matching a specific vertical resolution height (e.g., 1080 for 1080p, 720 for 720p).
     Height(u64),
-    /// Selects a specific variant by its explicit 0-based index from the master playlist.
     Index(usize),
 }
 
@@ -70,43 +65,35 @@ impl VideoFormat {
     }
 }
 
-
-/// Configuration options for managing the lifecycle and parameters of a stream download.
 #[derive(Clone)]
 pub struct DownloadOptions {
-    /// The directory where the downloaded media segments or final output file will be stored.
     pub output_dir: Option<PathBuf>,
-
-    /// The filename to assign to the completed download. If `None`, a default name
-    /// derived from the stream metadata is used.
     pub output_name: Option<String>,
-
-    /// The number of concurrent worker threads to allocate for downloading stream segments.
     pub threads: usize,
-
-    /// An index representing the desired stream quality (e.g., resolution or bitrate)
-    /// as defined in the M3U8 master playlist.
     pub quality: QualityPreference,
-
     pub format: VideoFormat,
-
-    /// The point in the stream timeline, in milliseconds, at which the download should begin.
     pub start_ms: Option<u64>,
-
-    /// The point in the stream timeline, in milliseconds, at which the download should terminate.
     pub end_ms: Option<u64>,
-
-    /// The look-ahead or jitter buffer duration in milliseconds, used to account
-    /// for network latency and segment availability.
     pub buffer_ms: Option<u64>,
-
-    /// An optional hook invoked periodically to report download progress,
-    /// such as bytes downloaded or segment completion status.
     pub progress_hook: Option<ProgressCallback>,
-
-    /// A watch receiver used to monitor for cancellation signals. If the value
-    /// updates to `true`, the downloader will perform a graceful shutdown.
     pub cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
+}
+
+impl std::fmt::Debug for DownloadOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DownloadOptions")
+            .field("output_dir", &self.output_dir)
+            .field("output_name", &self.output_name)
+            .field("threads", &self.threads)
+            .field("quality", &self.quality)
+            .field("format", &self.format)
+            .field("start_ms", &self.start_ms)
+            .field("end_ms", &self.end_ms)
+            .field("buffer_ms", &self.buffer_ms)
+            .field("progress_hook", &if self.progress_hook.is_some() { "Some(Callback)" } else { "None" })
+            .field("cancel_rx", &if self.cancel_rx.is_some() { "Some(Receiver)" } else { "None" })
+            .finish()
+    }
 }
 
 impl Default for DownloadOptions {
@@ -354,46 +341,173 @@ pub(crate) struct KickClipChannel {
     pub username: Option<String>,
 }
 
-/// Configuration options for controlling the behavior of the Kick stream downloader.
+// --- Twitch GraphQL Types ---
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TwitchGqlClipResponse {
+    pub data: Option<TwitchGqlClipData>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TwitchGqlClipData {
+    pub clip: Option<TwitchGqlClip>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TwitchGqlClip {
+    pub video_offset_seconds: Option<f64>,
+    pub duration_seconds: Option<f64>,
+    pub video: Option<TwitchGqlVideoId>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TwitchGqlVideoId {
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TwitchGqlCommentsResponse {
+    pub data: Option<TwitchGqlCommentsData>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TwitchGqlCommentsData {
+    pub video: Option<TwitchGqlVideo>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TwitchGqlVideo {
+    pub comments: Option<TwitchGqlCommentsConnection>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TwitchGqlCommentsConnection {
+    pub edges: Option<Vec<TwitchGqlCommentEdge>>,
+    pub page_info: Option<TwitchGqlPageInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TwitchGqlCommentEdge {
+    pub cursor: Option<String>,
+    pub node: Option<TwitchGqlCommentNode>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TwitchGqlCommentNode {
+    pub id: Option<String>,
+    pub content_offset_seconds: Option<f64>,
+    pub message: Option<TwitchGqlCommentMessage>,
+    pub commenter: Option<TwitchGqlCommenter>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TwitchGqlCommentMessage {
+    pub user_badges: Option<Vec<TwitchGqlUserBadge>>,
+    pub user_color: Option<String>,
+    pub fragments: Option<Vec<TwitchGqlMessageFragment>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TwitchGqlUserBadge {
+    #[serde(rename = "setID")]
+    pub set_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TwitchGqlMessageFragment {
+    pub text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TwitchGqlCommenter {
+    pub id: Option<String>,
+    pub login: Option<String>,
+    pub display_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TwitchGqlPageInfo {
+    pub has_next_page: Option<bool>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TwitchGqlRequest<'a> {
+    pub operation_name: &'static str,
+    pub variables: TwitchGqlVariables<'a>,
+    pub extensions: TwitchGqlExtensions,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TwitchGqlVariables<'a> {
+    #[serde(rename = "videoID")]
+    pub video_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_offset_seconds: Option<i64>,
+}
+
+// FIX: Added missing rename_all here to prevent sending "persisted_query"
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TwitchGqlExtensions {
+    pub persisted_query: PersistedQuery,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PersistedQuery {
+    pub version: u32,
+    pub sha256_hash: &'static str,
+}
+
 #[derive(Clone)]
 pub struct ChatOptions {
-    /// The directory where downloaded segments or processed files should be saved.
     pub output_dir: Option<PathBuf>,
-
-    /// The base filename to use for the output. If not provided, a default
-    /// naming convention based on the stream ID will be used.
     pub output_name: Option<String>,
-
-    /// The starting timestamp of the stream in milliseconds to begin downloading from.
     pub start_ms: Option<u64>,
-
-    /// The ending timestamp of the stream in milliseconds to stop downloading.
     pub end_ms: Option<u64>,
-
-    /// The size of the look-ahead buffer in milliseconds. Used to handle
-    /// jitter in stream segment availability.
     pub buffer_ms: Option<u64>,
-
-    /// The maximum number of attempts to download a specific segment before
-    /// marking it as failed.
     pub max_retries: usize,
-
-    /// Number of concurrent download tasks to run. Higher values improve
-    /// throughput but increase the risk of being rate-limited.
     pub kick_concurrency: usize,
-
-    /// The number of consecutive polling cycles that return no new segments
-    /// before the downloader decides the stream has ended.
     pub empty_cycle_threshold: usize,
-
-    /// A callback function invoked during the download process to report
-    /// status, progress percentage, or errors.
     pub progress_hook: Option<ProgressCallback>,
-
-    /// A watch receiver used to gracefully interrupt the download process.
-    /// If the receiver signals `true`, the downloader will attempt to stop.
     pub cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
 }
+
+impl fmt::Debug for ChatOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ChatOptions")
+            .field("output_dir", &self.output_dir)
+            .field("output_name", &self.output_name)
+            .field("start_ms", &self.start_ms)
+            .field("end_ms", &self.end_ms)
+            .field("buffer_ms", &self.buffer_ms)
+            .field("max_retries", &self.max_retries)
+            .field("kick_concurrency", &self.kick_concurrency)
+            .field("empty_cycle_threshold", &self.empty_cycle_threshold)
+            .field(
+                "progress_hook",
+                &if self.progress_hook.is_some() { "Some(Callback)" } else { "None" },
+            )
+            .field(
+                "cancel_rx",
+                &if self.cancel_rx.is_some() { "Some(Receiver)" } else { "None" },
+            )
+            .finish()
+    }
+}
+
 impl Default for ChatOptions {
     fn default() -> Self {
         Self {
@@ -402,11 +516,9 @@ impl Default for ChatOptions {
             start_ms: None,
             end_ms: None,
             buffer_ms: None,
-
             max_retries: 8,
             kick_concurrency: 10,
             empty_cycle_threshold: 6,
-
             progress_hook: None,
             cancel_rx: None,
         }

@@ -117,7 +117,7 @@ pub(crate) async fn download_vod_internal(
     client: &StreamClient,
     meta: &StreamMetadata,
     options: DownloadOptions,
-) -> Result<()> {
+) -> Result<PathBuf> {
     let m3u8_url = meta
         .playback_url
         .as_ref()
@@ -188,7 +188,9 @@ pub(crate) async fn download_vod_internal(
         }
         file.flush().await?;
         report(ProgressPayload::Done);
-        return Ok(());
+
+        // Fix: Return the path for the MP4 branch
+        return Ok(final_output_path);
     }
 
     report(ProgressPayload::Downloading {
@@ -355,7 +357,7 @@ pub(crate) async fn download_vod_internal(
             .collect::<Vec<_>>()
             .join("\n"),
     )
-    .await?;
+        .await?;
 
     report(ProgressPayload::Merging);
     let mut args = vec![
@@ -393,5 +395,6 @@ pub(crate) async fn download_vod_internal(
     }
 
     report(ProgressPayload::Done);
-    Ok(())
+
+    Ok(final_output_path)
 }

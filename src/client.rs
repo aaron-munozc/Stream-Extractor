@@ -4,7 +4,7 @@ use reqwest::{
     header::{HeaderMap, HeaderValue},
 };
 use std::sync::Arc;
-
+use url::Url;
 use crate::error::Result;
 
 #[derive(Clone, Debug)]
@@ -40,6 +40,7 @@ impl StreamClient {
     pub fn reqwest_client(&self) -> &Client {
         &self.inner
     }
+
 }
 
 pub struct StreamClientBuilder {

@@ -4,14 +4,13 @@ mod downloader;
 pub mod error;
 mod kick;
 mod twitch;
-pub mod types;
+mod types;
 use log::{debug, info, warn};
 
-pub use crate::types::ChatOptions;
 pub use client::StreamClient;
 pub use error::{Error, Result};
 pub use types::{
-    DownloadOptions, Platform, ProgressPayload, StreamMetadata, StreamQuality, StreamStatus,
+    DownloadOptions, Platform, ProgressPayload, StreamMetadata, StreamQuality, StreamStatus, ChatOptions
 };
 
 pub struct Stream {
@@ -36,15 +35,15 @@ impl Stream {
         downloader::get_qualities_internal(&self.client, url).await
     }
 
-    pub async fn download_video(&self, options: DownloadOptions) -> Result<()> {
+    pub async fn download_video(&self, options: DownloadOptions) -> Result<std::path::PathBuf> {
         info!(
-            "Beginning resource acquisition pipeline on platform: {}",
-            self.metadata.platform
-        );
+        "Beginning resource acquisition pipeline on platform: {}",
+        self.metadata.platform
+    );
         downloader::download_vod_internal(&self.client, &self.metadata, options).await
     }
 
-    pub async fn download_chat(&self, options: ChatOptions) -> Result<()> {
+    pub async fn download_chat(&self, options: ChatOptions) -> Result<std::path::PathBuf> {
         log::info!(
             "Beginning chat capture timeline on platform: {}",
             self.metadata.platform

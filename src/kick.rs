@@ -32,9 +32,15 @@ pub(crate) fn get_kick_stream_info(url: &str) -> KickStream {
         .unwrap_or_default();
 
     match segments.as_slice() {
-        ["video" | "videos", uuid, ..] => KickStream::Vod(uuid.to_string()),
-        ["clips", clip_id, ..] => KickStream::Clip(clip_id.to_string()),
+        // Matches: kick.com/<username>/video/<uuid> or kick.com/<username>/videos/<uuid>
+        [_, "video" | "videos", uuid, ..] => KickStream::Vod(uuid.to_string()),
+
+        // Matches: kick.com/<username>/clips/<clip_id>
+        [_, "clips", clip_id, ..] => KickStream::Clip(clip_id.to_string()),
+
+        // Matches: kick.com/<username> (Live channel feed)
         [slug] => KickStream::Live(slug.to_string()),
+
         _ => KickStream::Invalid,
     }
 }

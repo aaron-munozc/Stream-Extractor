@@ -2,6 +2,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures::future::join_all;
 use rand::RngExt;
 use std::collections::HashSet;
+use std::path::PathBuf;
 use tokio::fs as async_fs;
 use tokio::io::{AsyncWriteExt, BufWriter as AsyncBufWriter};
 use tokio::sync::mpsc;
@@ -10,7 +11,11 @@ use url::Url;
 use crate::ProgressPayload;
 use crate::client::StreamClient;
 use crate::error::{Error, Result};
-use crate::types::{ChatOptions, ChatResponse, MessageEnriched, Platform, StreamMetadata};
+use crate::types::{
+    ChatOptions, ChatResponse, MessageEnriched, PersistedQuery, Platform, StreamMetadata,
+    TwitchGqlClipResponse, TwitchGqlCommentsResponse, TwitchGqlExtensions, TwitchGqlRequest,
+    TwitchGqlVariables,
+};
 
 const SAVE_CHANNEL_CAPACITY: usize = 4096;
 const KICK_STEP_SECS: i64 = 5;
@@ -84,7 +89,7 @@ async fn fetch_json_with_retries(
         tokio::time::sleep(std::time::Duration::from_millis(
             (backoff_ms + jitter).min(10_000),
         ))
-        .await;
+            .await;
     }
 }
 
@@ -92,7 +97,7 @@ pub(crate) async fn download_chat_internal(
     client: &StreamClient,
     meta: &StreamMetadata,
     options: ChatOptions,
-) -> Result<()> {
+) -> Result<PathBuf> {
     let report = |payload: ProgressPayload| {
         if let Some(ref hook) = options.progress_hook {
             hook(payload);
@@ -190,32 +195,22 @@ pub(crate) async fn download_chat_internal(
                 .send()
                 .await?;
 
-            let val: serde_json::Value = resp.json().await?;
+            let parsed: TwitchGqlClipResponse = resp.json().await?;
 
-            let clip_node = val
-                .get("data")
-                .and_then(|d| d.get("clip"))
-                .and_then(|c| c.as_object())
-                .ok_or_else(|| {
-                    Error::InvalidUrl("Invalid Twitch clip slug or API error.".into())
-                })?;
+            let clip_node = parsed
+                .data
+                .and_then(|d| d.clip)
+                .ok_or_else(|| Error::InvalidUrl("Invalid Twitch clip slug or API error.".into()))?;
 
             let v_id = clip_node
-                .get("video")
-                .and_then(|v| v.get("id"))
-                .and_then(|i| i.as_str())
+                .video
+                .and_then(|v| v.id)
                 .ok_or_else(|| Error::InvalidUrl("Clip has no associated VOD.".into()))?;
 
-            video_id = v_id.to_string();
+            video_id = v_id;
 
-            let offset = clip_node
-                .get("videoOffsetSeconds")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
-            let duration = clip_node
-                .get("durationSeconds")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
+            let offset = clip_node.video_offset_seconds.unwrap_or(0.0);
+            let duration = clip_node.duration_seconds.unwrap_or(0.0);
 
             (offset, duration)
         } else {
@@ -227,7 +222,6 @@ pub(crate) async fn download_chat_internal(
         }
 
         let window_length_ms = effective_end_ms.saturating_sub(start_offset_ms);
-
         let mut offset_sec = clip_offset_sec + (start_offset_ms as f64) / 1000.0;
         let mut cursor: Option<String> = None;
         let mut consecutive_empty = 0;
@@ -245,18 +239,19 @@ pub(crate) async fn download_chat_internal(
                 return Err(Error::Cancelled("User requested abort".into()));
             }
 
-            let body = if let Some(ref cur) = cursor {
-                serde_json::json!({
-                    "operationName": "VideoCommentsByOffsetOrCursor",
-                    "variables": { "videoID": video_id, "cursor": cur },
-                    "extensions": { "persistedQuery": { "version": 1, "sha256Hash": "b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044aa76adf6a" } }
-                })
-            } else {
-                serde_json::json!({
-                    "operationName": "VideoCommentsByOffsetOrCursor",
-                    "variables": { "videoID": video_id, "contentOffsetSeconds": offset_sec.floor() as i64 },
-                    "extensions": { "persistedQuery": { "version": 1, "sha256Hash": "b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044aa76adf6a" } }
-                })
+            let body = TwitchGqlRequest {
+                operation_name: "VideoCommentsByOffsetOrCursor",
+                variables: TwitchGqlVariables {
+                    video_id: &video_id,
+                    cursor: cursor.as_deref(),
+                    content_offset_seconds: cursor.is_none().then(|| offset_sec.floor() as i64),
+                },
+                extensions: TwitchGqlExtensions {
+                    persisted_query: PersistedQuery {
+                        version: 1,
+                        sha256_hash: "b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044aa76adf6a",
+                    },
+                },
             };
 
             let resp = twitch_client
@@ -269,15 +264,14 @@ pub(crate) async fn download_chat_internal(
             if !resp.status().is_success() {
                 break;
             }
-            let val: serde_json::Value = resp.json().await?;
 
-            let edges = val
-                .get("data")
-                .and_then(|d| d.get("video"))
-                .and_then(|v| v.get("comments"))
-                .and_then(|c| c.get("edges"))
-                .and_then(|e| e.as_array())
-                .cloned()
+            let parsed: TwitchGqlCommentsResponse = resp.json().await?;
+
+            let (edges, page_info) = parsed
+                .data
+                .and_then(|d| d.video)
+                .and_then(|v| v.comments)
+                .map(|c| (c.edges.unwrap_or_default(), c.page_info))
                 .unwrap_or_default();
 
             if edges.is_empty() {
@@ -290,8 +284,12 @@ pub(crate) async fn download_chat_internal(
                 let mut max_page_offset = offset_sec;
 
                 for edge in &edges {
-                    let node = &edge["node"];
-                    let offset = node["contentOffsetSeconds"].as_f64().unwrap_or(0.0);
+                    let node = match &edge.node {
+                        Some(n) => n,
+                        None => continue,
+                    };
+
+                    let offset = node.content_offset_seconds.unwrap_or(0.0);
                     let absolute_msg_ms = offset * 1000.0;
 
                     if offset > max_page_offset {
@@ -306,61 +304,83 @@ pub(crate) async fn download_chat_internal(
                         continue;
                     }
 
-                    let msg_id = node["id"].as_str().unwrap_or("").to_string();
+                    let msg_id = node.id.clone().unwrap_or_default();
                     if msg_id.is_empty() || !seen_msg_ids.insert(msg_id.clone()) {
                         continue;
                     }
 
                     let mut badges = Vec::new();
-                    if let Some(arr) = node["message"]["userBadges"].as_array() {
-                        for b in arr {
-                            let text = match b["setID"].as_str().unwrap_or("") {
-                                "broadcaster" => "👑",
-                                "moderator" => "⚔",
-                                "subscriber" => "★",
-                                "staff" => "⛨",
-                                _ => "",
+                    let mut content = String::new();
+                    let mut user_color = String::new();
+
+                    if let Some(msg_data) = &node.message {
+                        user_color = msg_data.user_color.clone().unwrap_or_default();
+
+                        if let Some(arr) = &msg_data.user_badges {
+                            for b in arr {
+                                let set_id = b.set_id.clone().unwrap_or_default();
+                                let text = match set_id.as_str() {
+                                    "broadcaster" => "👑",
+                                    "moderator" => "⚔",
+                                    "subscriber" => "★",
+                                    "staff" => "⛨",
+                                    _ => "",
+                                }
+                                    .to_string();
+                                badges.push(crate::types::Badge {
+                                    r#type: set_id,
+                                    text,
+                                });
                             }
-                            .to_string();
-                            badges.push(crate::types::Badge {
-                                r#type: b["setID"].as_str().unwrap_or("").into(),
-                                text,
-                            });
+                        }
+
+                        if let Some(frags) = &msg_data.fragments {
+                            content = frags
+                                .iter()
+                                .filter_map(|f| f.text.as_deref())
+                                .collect();
                         }
                     }
 
-                    let content = node["message"]["fragments"]
-                        .as_array()
-                        .map(|f| {
-                            f.iter()
-                                .filter_map(|x| x["text"].as_str())
-                                .collect::<String>()
-                        })
+                    let commenter_id = node
+                        .commenter
+                        .as_ref()
+                        .and_then(|c| c.id.clone())
+                        .unwrap_or_else(|| "0".into())
+                        .parse()
+                        .unwrap_or(0);
+
+                    let commenter_login = node
+                        .commenter
+                        .as_ref()
+                        .and_then(|c| c.login.clone())
                         .unwrap_or_default();
-                    let commenter = &node["commenter"];
+
+                    let commenter_name = node
+                        .commenter
+                        .as_ref()
+                        .and_then(|c| c.display_name.clone())
+                        .unwrap_or_else(|| commenter_login.clone());
 
                     let msg = crate::types::Message {
                         id: msg_id,
                         chat_id: video_id.parse().unwrap_or(0),
-                        user_id: commenter["id"].as_str().unwrap_or("0").parse().unwrap_or(0),
+                        user_id: commenter_id,
                         content,
                         r#type: "chat".into(),
                         metadata: "".into(),
                         sender: crate::types::Sender {
-                            id: commenter["id"].as_str().unwrap_or("0").parse().unwrap_or(0),
-                            slug: commenter["login"].as_str().unwrap_or("").into(),
-                            username: commenter["displayName"]
-                                .as_str()
-                                .unwrap_or(commenter["login"].as_str().unwrap_or(""))
-                                .into(),
+                            id: commenter_id,
+                            slug: commenter_login,
+                            username: commenter_name,
                             identity: crate::types::Identity {
-                                color: node["message"]["userColor"].as_str().unwrap_or("").into(),
+                                color: user_color,
                                 badges,
                             },
                         },
                         created_at: (stream_start
                             + ChronoDuration::milliseconds(absolute_msg_ms as i64))
-                        .to_rfc3339(),
+                            .to_rfc3339(),
                     };
 
                     let _ = tx
@@ -386,20 +406,13 @@ pub(crate) async fn download_chat_internal(
                     break;
                 }
 
-                let page_info = val
-                    .get("data")
-                    .and_then(|d| d.get("video"))
-                    .and_then(|v| v.get("comments"))
-                    .and_then(|c| c.get("pageInfo"));
-
                 let has_next = page_info
-                    .and_then(|p| p.get("hasNextPage"))
-                    .and_then(|h| h.as_bool())
+                    .and_then(|p| p.has_next_page)
                     .unwrap_or(false);
 
                 if has_next {
                     if let Some(last_edge) = edges.last() {
-                        if let Some(c) = last_edge.get("cursor").and_then(|cur| cur.as_str()) {
+                        if let Some(c) = &last_edge.cursor {
                             cursor = Some(c.to_string());
                         } else {
                             break;
@@ -514,5 +527,6 @@ pub(crate) async fn download_chat_internal(
     async_fs::rename(&tmp_path, &final_output_path).await?;
 
     report(ProgressPayload::Done);
-    Ok(())
+
+    Ok(final_output_path)
 }

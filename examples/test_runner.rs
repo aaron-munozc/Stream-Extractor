@@ -64,12 +64,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ProgressPayload::Downloading { percent, .. } => {
                         print!("\r     [Downloading] {}% ", percent);
                         use std::io::Write;
-                        let _ = std::io::stdout().flush(); // <-- Replace .unwrap() with let _
+                        let _ = std::io::stdout().flush();
                     }
                     ProgressPayload::Merging => {
                         print!("\r     [Ffmpeg] Stitching...                    ");
                         use std::io::Write;
-                        let _ = std::io::stdout().flush(); // <-- Replace .unwrap() with let _
+                        let _ = std::io::stdout().flush();
                     }
                     ProgressPayload::Done => println!("\n     Task Complete!"),
                     ProgressPayload::Error { message } => {
@@ -84,7 +84,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // --- CHAT DOWNLOAD ---
                 let chat_file = format!("{}_chat", safe_name);
-                let chat_path = output_directory.join(&chat_file);
                 let chat_opts = ChatOptions {
                     output_dir: Some(output_directory.clone()),
                     output_name: Some(chat_file),
@@ -94,23 +93,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ..Default::default()
                 };
 
-                if let Err(e) = stream.download_chat(chat_opts).await {
-                    println!("      Chat extraction failed: {:?}", e);
-                    failed_tests += 1;
-                    continue;
-                }
+                let actual_chat_path = match stream.download_chat(chat_opts).await {
+                    Ok(path) => path,
+                    Err(e) => {
+                        println!("      Chat extraction failed: {:?}", e);
+                        failed_tests += 1;
+                        continue;
+                    }
+                };
 
-                // Assert file actually exists and contains data
+                // Assert file actually exists and contains data using the returned path
                 assert!(
-                    chat_path.exists(),
-                    "Chat file was reported successful but does not exist!"
+                    actual_chat_path.exists(),
+                    "Chat file was reported successful but does not exist at {:?}", actual_chat_path
                 );
-                let chat_size = fs::metadata(&chat_path)?.len();
+                let chat_size = fs::metadata(&actual_chat_path)?.len();
                 println!("      Chat Written: {} bytes", chat_size);
 
                 // --- VIDEO DOWNLOAD ---
                 let video_file = format!("{}_video", safe_name);
-                let video_path = output_directory.join(&video_file);
                 let video_opts = DownloadOptions {
                     output_dir: Some(output_directory.clone()),
                     output_name: Some(video_file),
@@ -121,17 +122,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ..Default::default()
                 };
 
-                if let Err(e) = stream.download_video(video_opts).await {
-                    println!("      Video extraction failed: {:?}", e);
-                    failed_tests += 1;
-                    continue;
-                }
+                let actual_video_path = match stream.download_video(video_opts).await {
+                    Ok(path) => path,
+                    Err(e) => {
+                        println!("      Video extraction failed: {:?}", e);
+                        failed_tests += 1;
+                        continue;
+                    }
+                };
 
+                // Assert file actually exists and contains data using the returned path
                 assert!(
-                    video_path.exists(),
-                    "Video file was reported successful but does not exist!"
+                    actual_video_path.exists(),
+                    "Video file was reported successful but does not exist at {:?}", actual_video_path
                 );
-                let video_size = fs::metadata(&video_path)?.len();
+                let video_size = fs::metadata(&actual_video_path)?.len();
                 println!("      Video Written: {} bytes", video_size);
             }
             Err(e) => {
