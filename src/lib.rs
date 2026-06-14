@@ -7,7 +7,8 @@ mod twitch;
 mod types;
 use log::{debug, info, warn};
 
-use crate::error::{Error, Result};
+use crate::error::{Result};
+pub use error::Error;
 pub use client::StreamClient;
 pub use types::{
     Badge, ChatOptions, DownloadOptions, Identity, MessageSaved, Platform, ProgressCallback,

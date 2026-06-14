@@ -1,8 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use stream_extractor::{ChatOptions, DownloadOptions, ProgressPayload, StreamClient, fetch_stream};
-
+use stream_extractor::{fetch_stream, ChatOptions, DownloadOptions, ProgressPayload, StreamClient};
 struct TestCase {
     name: &'static str,
     url: &'static str,
