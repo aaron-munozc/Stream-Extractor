@@ -1,11 +1,10 @@
+use crate::error::Result;
 use reqwest::{
     Client, ClientBuilder,
     cookie::Jar,
     header::{HeaderMap, HeaderValue},
 };
 use std::sync::Arc;
-use url::Url;
-use crate::error::Result;
 
 #[derive(Clone, Debug)]
 pub struct StreamClient {
@@ -40,7 +39,6 @@ impl StreamClient {
     pub fn reqwest_client(&self) -> &Client {
         &self.inner
     }
-
 }
 
 pub struct StreamClientBuilder {
@@ -83,6 +81,9 @@ impl StreamClientBuilder {
     pub fn build(self) -> Result<StreamClient> {
         // Build safely; no mandatory overrides happen here.
         let client = self.inner_builder.build()?;
-        Ok(StreamClient { inner: client, cookie_jar: self.cookie_jar })
+        Ok(StreamClient {
+            inner: client,
+            cookie_jar: self.cookie_jar,
+        })
     }
 }

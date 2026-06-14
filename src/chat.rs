@@ -12,7 +12,7 @@ use crate::ProgressPayload;
 use crate::client::StreamClient;
 use crate::error::{Error, Result};
 use crate::types::{
-    ChatOptions, ChatResponse, MessageEnriched, PersistedQuery, Platform, StreamMetadata,
+    ChatOptions, ChatResponse, MessageSaved, PersistedQuery, Platform, StreamMetadata,
     TwitchGqlClipResponse, TwitchGqlCommentsResponse, TwitchGqlExtensions, TwitchGqlRequest,
     TwitchGqlVariables,
 };
@@ -89,7 +89,7 @@ async fn fetch_json_with_retries(
         tokio::time::sleep(std::time::Duration::from_millis(
             (backoff_ms + jitter).min(10_000),
         ))
-            .await;
+        .await;
     }
 }
 
@@ -197,10 +197,9 @@ pub(crate) async fn download_chat_internal(
 
             let parsed: TwitchGqlClipResponse = resp.json().await?;
 
-            let clip_node = parsed
-                .data
-                .and_then(|d| d.clip)
-                .ok_or_else(|| Error::InvalidUrl("Invalid Twitch clip slug or API error.".into()))?;
+            let clip_node = parsed.data.and_then(|d| d.clip).ok_or_else(|| {
+                Error::InvalidUrl("Invalid Twitch clip slug or API error.".into())
+            })?;
 
             let v_id = clip_node
                 .video
@@ -326,7 +325,7 @@ pub(crate) async fn download_chat_internal(
                                     "staff" => "⛨",
                                     _ => "",
                                 }
-                                    .to_string();
+                                .to_string();
                                 badges.push(crate::types::Badge {
                                     r#type: set_id,
                                     text,
@@ -335,10 +334,7 @@ pub(crate) async fn download_chat_internal(
                         }
 
                         if let Some(frags) = &msg_data.fragments {
-                            content = frags
-                                .iter()
-                                .filter_map(|f| f.text.as_deref())
-                                .collect();
+                            content = frags.iter().filter_map(|f| f.text.as_deref()).collect();
                         }
                     }
 
@@ -380,11 +376,11 @@ pub(crate) async fn download_chat_internal(
                         },
                         created_at: (stream_start
                             + ChronoDuration::milliseconds(absolute_msg_ms as i64))
-                            .to_rfc3339(),
+                        .to_rfc3339(),
                     };
 
                     let _ = tx
-                        .send(serde_json::to_string(&MessageEnriched::from_message(
+                        .send(serde_json::to_string(&MessageSaved::from_message(
                             &msg,
                             stream_start,
                         ))?)
@@ -406,9 +402,7 @@ pub(crate) async fn download_chat_internal(
                     break;
                 }
 
-                let has_next = page_info
-                    .and_then(|p| p.has_next_page)
-                    .unwrap_or(false);
+                let has_next = page_info.and_then(|p| p.has_next_page).unwrap_or(false);
 
                 if has_next {
                     if let Some(last_edge) = edges.last() {
@@ -485,7 +479,7 @@ pub(crate) async fn download_chat_internal(
                     for m in &resp.data.messages {
                         if seen_msg_ids.insert(m.id.clone()) {
                             let _ = tx
-                                .send(serde_json::to_string(&MessageEnriched::from_message(
+                                .send(serde_json::to_string(&MessageSaved::from_message(
                                     m,
                                     stream_start,
                                 ))?)

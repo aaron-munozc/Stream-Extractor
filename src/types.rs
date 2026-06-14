@@ -90,8 +90,22 @@ impl std::fmt::Debug for DownloadOptions {
             .field("start_ms", &self.start_ms)
             .field("end_ms", &self.end_ms)
             .field("buffer_ms", &self.buffer_ms)
-            .field("progress_hook", &if self.progress_hook.is_some() { "Some(Callback)" } else { "None" })
-            .field("cancel_rx", &if self.cancel_rx.is_some() { "Some(Receiver)" } else { "None" })
+            .field(
+                "progress_hook",
+                &if self.progress_hook.is_some() {
+                    "Some(Callback)"
+                } else {
+                    "None"
+                },
+            )
+            .field(
+                "cancel_rx",
+                &if self.cancel_rx.is_some() {
+                    "Some(Receiver)"
+                } else {
+                    "None"
+                },
+            )
             .finish()
     }
 }
@@ -283,6 +297,7 @@ where
 
 #[derive(Debug, Deserialize, Clone)]
 pub(crate) struct KickVideoResponse {
+    #[allow(dead_code)]
     pub uuid: Option<String>,
     pub views: Option<i64>,
     pub source: Option<String>,
@@ -498,11 +513,19 @@ impl fmt::Debug for ChatOptions {
             .field("empty_cycle_threshold", &self.empty_cycle_threshold)
             .field(
                 "progress_hook",
-                &if self.progress_hook.is_some() { "Some(Callback)" } else { "None" },
+                &if self.progress_hook.is_some() {
+                    "Some(Callback)"
+                } else {
+                    "None"
+                },
             )
             .field(
                 "cancel_rx",
-                &if self.cancel_rx.is_some() { "Some(Receiver)" } else { "None" },
+                &if self.cancel_rx.is_some() {
+                    "Some(Receiver)"
+                } else {
+                    "None"
+                },
             )
             .finish()
     }
@@ -526,22 +549,21 @@ impl Default for ChatOptions {
 }
 
 // --- Chat Data Structures ---
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct Badge {
+pub struct Badge {
     pub r#type: String,
     pub text: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct Identity {
+pub struct Identity {
     pub color: String,
     #[serde(default)]
     pub badges: Vec<Badge>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct Sender {
+pub struct Sender {
     pub id: i64,
     pub slug: String,
     pub username: String,
@@ -561,7 +583,7 @@ pub(crate) struct Message {
 }
 
 #[derive(Debug, Serialize, Clone)]
-pub(crate) struct MessageEnriched {
+pub struct MessageSaved {
     pub id: String,
     pub chat_id: i64,
     pub user_id: i64,
@@ -574,8 +596,8 @@ pub(crate) struct MessageEnriched {
     pub created_at_str: String,
 }
 
-impl MessageEnriched {
-    pub fn from_message(msg: &Message, stream_start: DateTime<Utc>) -> Self {
+impl MessageSaved {
+    pub(crate) fn from_message(msg: &Message, stream_start: DateTime<Utc>) -> Self {
         let created_at = DateTime::parse_from_rfc3339(&msg.created_at)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or(stream_start);

@@ -11,7 +11,10 @@ use url::Url;
 
 use crate::client::StreamClient;
 use crate::error::{Error, Result};
-use crate::types::{DownloadOptions, ProgressPayload, QualityPreference, StreamMetadata, StreamQuality, StreamResolution};
+use crate::types::{
+    DownloadOptions, ProgressPayload, QualityPreference, StreamMetadata, StreamQuality,
+    StreamResolution,
+};
 
 const RETRIES: usize = 3;
 const MAX_CONCURRENCY: usize = 16;
@@ -204,29 +207,23 @@ pub(crate) async fn download_vod_internal(
             let base = Url::parse(m3u8_url)?;
 
             let variant = match options.quality {
-                QualityPreference::Best => master
-                    .variants
-                    .iter()
-                    .max_by_key(|v| v.bandwidth),
+                QualityPreference::Best => master.variants.iter().max_by_key(|v| v.bandwidth),
 
-                QualityPreference::Worst => master
-                    .variants
-                    .iter()
-                    .min_by_key(|v| v.bandwidth),
+                QualityPreference::Worst => master.variants.iter().min_by_key(|v| v.bandwidth),
 
                 QualityPreference::Height(target_height) => master
                     .variants
                     .iter()
-                    .filter(|v| v.resolution.map_or(false, |r| r.height == target_height))
+                    .filter(|v| v.resolution.is_some_and(|r| r.height == target_height))
                     .max_by_key(|v| v.bandwidth)
                     .or_else(|| master.variants.iter().max_by_key(|v| v.bandwidth)),
 
-                QualityPreference::Index(idx) => master
-                    .variants
-                    .get(idx),
+                QualityPreference::Index(idx) => master.variants.get(idx),
             }
-                .or_else(|| master.variants.first())
-                .ok_or(Error::PlaylistParse("No variants found in master playlist".into()))?;
+            .or_else(|| master.variants.first())
+            .ok_or(Error::PlaylistParse(
+                "No variants found in master playlist".into(),
+            ))?;
 
             let mut joined = base.join(&variant.uri)?;
             if joined.query().is_none() && base.query().is_some() {
@@ -357,7 +354,7 @@ pub(crate) async fn download_vod_internal(
             .collect::<Vec<_>>()
             .join("\n"),
     )
-        .await?;
+    .await?;
 
     report(ProgressPayload::Merging);
     let mut args = vec![

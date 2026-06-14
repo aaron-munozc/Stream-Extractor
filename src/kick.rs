@@ -1,5 +1,5 @@
-use reqwest::header::{ACCEPT, REFERER};
 use reqwest::StatusCode;
+use reqwest::header::{ACCEPT, REFERER};
 use url::Url;
 
 use crate::client::StreamClient;
@@ -124,7 +124,6 @@ pub(crate) async fn fetch_kick_clip_api(
         .header(REFERER, "https://kick.com/")
         .send()
         .await?;
-
 
     if resp.status() == StatusCode::NOT_FOUND {
         return Ok(None);

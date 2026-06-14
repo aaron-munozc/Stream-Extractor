@@ -105,7 +105,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Assert file actually exists and contains data using the returned path
                 assert!(
                     actual_chat_path.exists(),
-                    "Chat file was reported successful but does not exist at {:?}", actual_chat_path
+                    "Chat file was reported successful but does not exist at {:?}",
+                    actual_chat_path
                 );
                 let chat_size = fs::metadata(&actual_chat_path)?.len();
                 println!("      Chat Written: {} bytes", chat_size);
@@ -134,7 +135,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Assert file actually exists and contains data using the returned path
                 assert!(
                     actual_video_path.exists(),
-                    "Video file was reported successful but does not exist at {:?}", actual_video_path
+                    "Video file was reported successful but does not exist at {:?}",
+                    actual_video_path
                 );
                 let video_size = fs::metadata(&actual_video_path)?.len();
                 println!("      Video Written: {} bytes", video_size);

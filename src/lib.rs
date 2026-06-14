@@ -1,5 +1,5 @@
 mod chat;
-pub mod client;
+mod client;
 mod downloader;
 pub mod error;
 mod kick;
@@ -7,10 +7,12 @@ mod twitch;
 mod types;
 use log::{debug, info, warn};
 
+use crate::error::{Error, Result};
 pub use client::StreamClient;
-pub use error::{Error, Result};
 pub use types::{
-    DownloadOptions, Platform, ProgressPayload, StreamMetadata, StreamQuality, StreamStatus, ChatOptions
+    Badge, ChatOptions, DownloadOptions, Identity, MessageSaved, Platform, ProgressCallback,
+    ProgressPayload, QualityPreference, Sender, StreamMetadata, StreamQuality, StreamResolution,
+    StreamStatus, VideoFormat,
 };
 
 pub struct Stream {
@@ -37,14 +39,14 @@ impl Stream {
 
     pub async fn download_video(&self, options: DownloadOptions) -> Result<std::path::PathBuf> {
         info!(
-        "Beginning resource acquisition pipeline on platform: {}",
-        self.metadata.platform
-    );
+            "Beginning resource acquisition pipeline on platform: {}",
+            self.metadata.platform
+        );
         downloader::download_vod_internal(&self.client, &self.metadata, options).await
     }
 
     pub async fn download_chat(&self, options: ChatOptions) -> Result<std::path::PathBuf> {
-        log::info!(
+        info!(
             "Beginning chat capture timeline on platform: {}",
             self.metadata.platform
         );
@@ -80,7 +82,10 @@ pub async fn fetch_stream(client: &StreamClient, url: &str) -> Result<Stream> {
                 kick::fetch_kick_video_api(client, &uuid).await?
             }
             kick::KickStream::Live(slug) => {
-                info!("Discovered Kick Live Channel footprint. Target profile: {}", slug);
+                info!(
+                    "Discovered Kick Live Channel footprint. Target profile: {}",
+                    slug
+                );
                 kick::fetch_kick_channel_api(client, &slug).await?
             }
             kick::KickStream::Clip(clip_id) => {

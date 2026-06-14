@@ -122,7 +122,6 @@ async fn fetch_twitch_video_graphql(
 
     let resp = resp.error_for_status()?;
 
-
     let parsed: GqlResponse = resp.json().await?;
     Ok(parsed.data.and_then(|d| d.video))
 }
@@ -186,7 +185,7 @@ pub(crate) async fn fetch_twitch_clip_metadata(
         .json(&info_body)
         .send()
         .await?;
-    
+
     if info_resp.status() == StatusCode::NOT_FOUND {
         return Ok(None);
     }
