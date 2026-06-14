@@ -5,6 +5,8 @@ pub mod error;
 mod kick;
 mod twitch;
 mod types;
+
+use std::ops::Deref;
 use log::{debug, info, warn};
 
 use crate::error::{Result};
@@ -17,7 +19,7 @@ pub use types::{
 };
 
 pub struct Stream {
-    pub metadata: StreamMetadata,
+    metadata: StreamMetadata,
     client: StreamClient,
 }
 
@@ -28,6 +30,11 @@ impl Stream {
             client: client.clone(),
         }
     }
+
+    pub fn into_inner(self) -> StreamMetadata {
+        self.metadata
+    }
+
     pub async fn get_qualities(&self) -> Result<Vec<StreamQuality>> {
         let url = self
             .metadata
@@ -52,6 +59,14 @@ impl Stream {
             self.metadata.platform
         );
         chat::download_chat_internal(&self.client, &self.metadata, options).await
+    }
+}
+
+impl Deref for Stream {
+    type Target = StreamMetadata;
+
+    fn deref(&self) -> &Self::Target {
+        &self.metadata
     }
 }
 

@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         match fetch_stream(&client, test.url).await {
             Ok(stream) => {
-                println!("     Metadata resolved! [{}]", stream.metadata.platform);
+                println!("     Metadata resolved! [{}]", stream.platform);
 
                 let progress_hook = Arc::new(|payload| match payload {
                     ProgressPayload::Downloading { percent, .. } => {
