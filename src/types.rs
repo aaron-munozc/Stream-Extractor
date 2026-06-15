@@ -79,6 +79,59 @@ pub struct DownloadOptions {
     pub cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
+// --- BUILDER PATTERN IMPLEMENTATION FOR DOWNLOAD OPTIONS ---
+impl DownloadOptions {
+    pub fn with_output_dir<P: Into<PathBuf>>(mut self, dir: P) -> Self {
+        self.output_dir = Some(dir.into());
+        self
+    }
+
+    pub fn with_output_name<S: Into<String>>(mut self, name: S) -> Self {
+        self.output_name = Some(name.into());
+        self
+    }
+
+    pub fn with_threads(mut self, threads: usize) -> Self {
+        self.threads = threads;
+        self
+    }
+
+    pub fn with_quality(mut self, quality: QualityPreference) -> Self {
+        self.quality = quality;
+        self
+    }
+
+    pub fn with_format(mut self, format: VideoFormat) -> Self {
+        self.format = format;
+        self
+    }
+
+    pub fn with_start_ms(mut self, ms: u64) -> Self {
+        self.start_ms = Some(ms);
+        self
+    }
+
+    pub fn with_end_ms(mut self, ms: u64) -> Self {
+        self.end_ms = Some(ms);
+        self
+    }
+
+    pub fn with_buffer_ms(mut self, ms: u64) -> Self {
+        self.buffer_ms = Some(ms);
+        self
+    }
+
+    pub fn with_progress_hook(mut self, hook: ProgressCallback) -> Self {
+        self.progress_hook = Some(hook);
+        self
+    }
+
+    pub fn with_cancel_rx(mut self, rx: tokio::sync::watch::Receiver<bool>) -> Self {
+        self.cancel_rx = Some(rx);
+        self
+    }
+}
+
 impl std::fmt::Debug for DownloadOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DownloadOptions")
@@ -188,7 +241,6 @@ pub struct StreamMetadata {
 }
 
 // --- Kick Internal Types ---
-
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub(crate) struct Chatroom {
     pub id: Option<i64>,
@@ -472,7 +524,6 @@ pub(crate) struct TwitchGqlVariables<'a> {
     pub content_offset_seconds: Option<i64>,
 }
 
-// FIX: Added missing rename_all here to prevent sending "persisted_query"
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TwitchGqlExtensions {
@@ -498,6 +549,59 @@ pub struct ChatOptions {
     pub empty_cycle_threshold: usize,
     pub progress_hook: Option<ProgressCallback>,
     pub cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
+}
+
+// --- BUILDER PATTERN IMPLEMENTATION FOR CHAT OPTIONS ---
+impl ChatOptions {
+    pub fn with_output_dir<P: Into<PathBuf>>(mut self, dir: P) -> Self {
+        self.output_dir = Some(dir.into());
+        self
+    }
+
+    pub fn with_output_name<S: Into<String>>(mut self, name: S) -> Self {
+        self.output_name = Some(name.into());
+        self
+    }
+
+    pub fn with_start_ms(mut self, ms: u64) -> Self {
+        self.start_ms = Some(ms);
+        self
+    }
+
+    pub fn with_end_ms(mut self, ms: u64) -> Self {
+        self.end_ms = Some(ms);
+        self
+    }
+
+    pub fn with_buffer_ms(mut self, ms: u64) -> Self {
+        self.buffer_ms = Some(ms);
+        self
+    }
+
+    pub fn with_max_retries(mut self, retries: usize) -> Self {
+        self.max_retries = retries;
+        self
+    }
+
+    pub fn with_kick_concurrency(mut self, concurrency: usize) -> Self {
+        self.kick_concurrency = concurrency;
+        self
+    }
+
+    pub fn with_empty_cycle_threshold(mut self, threshold: usize) -> Self {
+        self.empty_cycle_threshold = threshold;
+        self
+    }
+
+    pub fn with_progress_hook(mut self, hook: ProgressCallback) -> Self {
+        self.progress_hook = Some(hook);
+        self
+    }
+
+    pub fn with_cancel_rx(mut self, rx: tokio::sync::watch::Receiver<bool>) -> Self {
+        self.cancel_rx = Some(rx);
+        self
+    }
 }
 
 impl fmt::Debug for ChatOptions {
