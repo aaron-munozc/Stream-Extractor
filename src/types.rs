@@ -686,7 +686,7 @@ pub(crate) struct Message {
     pub created_at: String,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MessageSaved {
     pub id: String,
     pub chat_id: i64,
