@@ -56,8 +56,8 @@ pub(crate) async fn run_ffmpeg(
         }
     } else {
         cmd.output()
-            .await
-            .map_err(|e| Error::Ffmpeg(format!("Failed to execute ffmpeg: {}", e)))?
+           .await
+           .map_err(|e| Error::Ffmpeg(format!("Failed to execute ffmpeg: {}", e)))?
     };
 
     if !output.status.success() {
@@ -126,6 +126,7 @@ pub(crate) async fn download_vod_internal(
         .as_ref()
         .or(meta.source.as_ref())
         .ok_or(Error::NotFound)?;
+
     let report = |payload: ProgressPayload| {
         if let Some(ref hook) = options.progress_hook {
             hook(payload);
@@ -169,6 +170,7 @@ pub(crate) async fn download_vod_internal(
             percent: 0,
             message: "Initializing direct MP4 download...".into(),
         });
+
         let mut resp = client.inner.get(m3u8_url).send().await?;
         if !resp.status().is_success() {
             return Err(Error::Network(resp.error_for_status().unwrap_err()));
@@ -178,7 +180,10 @@ pub(crate) async fn download_vod_internal(
         let mut file = async_fs::File::create(&final_output_path).await?;
         let mut downloaded: u64 = 0;
 
-        while let Some(chunk) = resp.chunk().await? {
+        // Uses bytes_stream() to remain compatible with both reqwest and wreq
+        let mut byte_stream = resp.bytes_stream();
+        while let Some(chunk_res) = byte_stream.next().await {
+            let chunk = chunk_res?;
             file.write_all(&chunk).await?;
             downloaded += chunk.len() as u64;
             if total_size > 0.0 {
@@ -192,7 +197,6 @@ pub(crate) async fn download_vod_internal(
         file.flush().await?;
         report(ProgressPayload::Done);
 
-        // Fix: Return the path for the MP4 branch
         return Ok(final_output_path);
     }
 
@@ -220,10 +224,10 @@ pub(crate) async fn download_vod_internal(
 
                 QualityPreference::Index(idx) => master.variants.get(idx),
             }
-            .or_else(|| master.variants.first())
-            .ok_or(Error::PlaylistParse(
-                "No variants found in master playlist".into(),
-            ))?;
+                .or_else(|| master.variants.first())
+                .ok_or(Error::PlaylistParse(
+                    "No variants found in master playlist".into(),
+                ))?;
 
             let mut joined = base.join(&variant.uri)?;
             if joined.query().is_none() && base.query().is_some() {
@@ -236,9 +240,11 @@ pub(crate) async fn download_vod_internal(
     };
 
     log::info!("Fetching Media Playlist: {}", playlist_url);
+
+    // .as_str() guarantees IntoUri trait bounds are met for wreq
     let media_bytes = client
         .inner
-        .get(playlist_url.clone())
+        .get(playlist_url.as_str())
         .send()
         .await?
         .bytes()
@@ -260,6 +266,7 @@ pub(crate) async fn download_vod_internal(
             )));
         }
     };
+
     let buffer = options.buffer_ms.unwrap_or(0) as f64;
     let start_target = (options.start_ms.unwrap_or(0) as f64 - buffer).max(0.0);
     let end_target = options
@@ -313,11 +320,13 @@ pub(crate) async fn download_vod_internal(
             let task = async {
                 let mut attempts = 0;
                 loop {
-                    match client.get(url.clone()).send().await {
+                    // .as_str() guarantees IntoUri trait bounds are met for wreq
+                    match client.get(url.as_str()).send().await {
                         Ok(resp) => {
                             let mut file = async_fs::File::create(&path).await?;
                             let mut byte_stream = resp.bytes_stream();
                             let mut failed = false;
+
                             while let Some(chunk_res) = byte_stream.next().await {
                                 match chunk_res {
                                     Ok(chunk) => { file.write_all(&chunk).await?; }
@@ -354,7 +363,7 @@ pub(crate) async fn download_vod_internal(
             .collect::<Vec<_>>()
             .join("\n"),
     )
-    .await?;
+        .await?;
 
     report(ProgressPayload::Merging);
     let mut args = vec![

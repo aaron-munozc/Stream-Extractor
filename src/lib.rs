@@ -18,6 +18,18 @@ pub use types::{
     StreamStatus, VideoFormat,
 };
 
+#[cfg(all(feature = "reqwest-backend", feature = "wreq-backend"))]
+compile_error!("Features `reqwest-backend` and `wreq-backend` are mutually exclusive.");
+
+pub(crate) mod http {
+    #[cfg(feature = "reqwest-backend")]
+    pub use reqwest::{Client, ClientBuilder, Error, StatusCode, header, cookie::Jar};
+
+    #[cfg(feature = "wreq-backend")]
+    pub use wreq::{Client, ClientBuilder, Error, StatusCode, header, cookie::Jar};
+}
+
+
 pub struct Stream {
     metadata: StreamMetadata,
     client: StreamClient,

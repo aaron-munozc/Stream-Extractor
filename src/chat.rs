@@ -176,7 +176,7 @@ pub(crate) async fn download_chat_internal(
         let mut video_id = meta.vod_uuid.clone().ok_or(Error::MissingId)?;
         let is_clip = !video_id.chars().all(char::is_numeric);
 
-        let twitch_client = reqwest::Client::new();
+        let twitch_client = crate::http::Client::new();
 
         let (clip_offset_sec, clip_duration_sec) = if is_clip {
             report(ProgressPayload::Downloading {

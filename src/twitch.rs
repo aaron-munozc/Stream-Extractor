@@ -1,5 +1,5 @@
 use regex::Regex;
-use reqwest::StatusCode;
+use crate::http::StatusCode;
 use serde::Deserialize;
 use url::Url;
 use urlencoding::encode;

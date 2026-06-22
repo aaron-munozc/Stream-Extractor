@@ -1,5 +1,4 @@
-use reqwest::StatusCode;
-use reqwest::header::{ACCEPT, REFERER};
+use crate::http::{StatusCode, header::{ACCEPT, REFERER}};
 use url::Url;
 
 use crate::client::StreamClient;

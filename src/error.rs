@@ -1,7 +1,7 @@
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Network error: {0}")]
-    Network(#[from] reqwest::Error),
+    Network(#[from] crate::http::Error),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("URL parsing error: {0}")]

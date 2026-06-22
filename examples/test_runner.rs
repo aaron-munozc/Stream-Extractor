@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use stream_extractor::{fetch_stream, ChatOptions, DownloadOptions, ProgressPayload, StreamClient};
+
 struct TestCase {
     name: &'static str,
     url: &'static str,
@@ -11,6 +12,9 @@ struct TestCase {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Initialize the client using our updated StreamClient.
+    // If compiled with --features wreq-backend, this automatically configures
+    // wreq with the Chrome 105 fingerprint and cookie store under the hood.
     let client = StreamClient::new()?;
     let output_directory = PathBuf::from("target/test_downloads");
 
@@ -48,6 +52,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("==================================================");
     println!("     STREAM EXTRACTOR PIPELINE TEST MATRIX        ");
+
+    // Nice diagnostic printout to see which backend engine is currently under test
+    #[cfg(feature = "wreq-backend")]
+    println!("               [ ENGINE: WREQ ]                   ");
+    #[cfg(feature = "reqwest-backend")]
+    println!("              [ ENGINE: REQWEST ]                 ");
+
     println!("==================================================\n");
 
     let mut failed_tests = 0;
@@ -57,6 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         match fetch_stream(&client, test.url).await {
             Ok(stream) => {
+                // Accessing the platform metadata field directly via Deref trait
                 println!("     Metadata resolved! [{}]", stream.platform);
 
                 let progress_hook = Arc::new(|payload| match payload {
@@ -92,6 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ..Default::default()
                 };
 
+                // Because `download_chat` takes `&self`, we don't consume the stream anymore!
                 let actual_chat_path = match stream.download_chat(chat_opts).await {
                     Ok(path) => path,
                     Err(e) => {
@@ -101,7 +114,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                // Assert file actually exists and contains data using the returned path
                 assert!(
                     actual_chat_path.exists(),
                     "Chat file was reported successful but does not exist at {:?}",
@@ -122,6 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ..Default::default()
                 };
 
+                // Reusing the exact same stream reference for the video
                 let actual_video_path = match stream.download_video(video_opts).await {
                     Ok(path) => path,
                     Err(e) => {
@@ -131,7 +144,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                // Assert file actually exists and contains data using the returned path
                 assert!(
                     actual_video_path.exists(),
                     "Video file was reported successful but does not exist at {:?}",
