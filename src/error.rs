@@ -1,3 +1,6 @@
+/// Adding `#[non_exhaustive]` prevents downstream match exhaustion errors
+/// when new variants are added in a future version — essential for a public enum.
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Network error: {0}")]
@@ -8,7 +11,7 @@ pub enum Error {
     UrlParse(#[from] url::ParseError),
     #[error("JSON parsing error: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("Ffmpeg processing error: {0}")]
+    #[error("FFmpeg processing error: {0}")]
     Ffmpeg(String),
     #[error("Playlist format error: {0}")]
     PlaylistParse(String),
@@ -22,11 +25,11 @@ pub enum Error {
     Cancelled(String),
     #[error("Time parsing error: {0}")]
     TimeParse(String),
-    #[error("API Rate limited after retries")]
+    #[error("API rate-limited after retries")]
     RateLimited,
     #[error("Missing chat or video ID")]
     MissingId,
-    #[error("Http error: {0}")]
+    #[error("HTTP error: {0}")]
     Http(String),
 }
 

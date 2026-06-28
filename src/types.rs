@@ -5,7 +5,23 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-// --- Download specific types ---
+// ---------------------------------------------------------------------------
+// Utility
+// ---------------------------------------------------------------------------
+
+/// Parses an optional RFC 3339 datetime string into a `DateTime<Utc>`.
+/// Returns `None` if the input is `None` or if parsing fails.
+pub(crate) fn parse_datetime(s: Option<String>) -> Option<DateTime<Utc>> {
+    s.and_then(|s| {
+        DateTime::parse_from_rfc3339(&s)
+            .ok()
+            .map(|dt| dt.with_timezone(&Utc))
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Download-specific types
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -23,10 +39,12 @@ pub struct StreamQuality {
     pub bandwidth: Option<u64>,
 }
 
+/// Progress update emitted during a download or merge operation.
 #[derive(Clone, Serialize, Debug)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum ProgressPayload {
-    Downloading { percent: i64, message: String },
+    /// `percent` is clamped to 0–100 by the caller.
+    Downloading { percent: u8, message: String },
     Merging,
     Done,
     Error { message: String },
@@ -79,53 +97,62 @@ pub struct DownloadOptions {
     pub cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
-// --- BUILDER PATTERN IMPLEMENTATION FOR DOWNLOAD OPTIONS ---
 impl DownloadOptions {
+    #[must_use]
     pub fn with_output_dir<P: Into<PathBuf>>(mut self, dir: P) -> Self {
         self.output_dir = Some(dir.into());
         self
     }
 
+    #[must_use]
     pub fn with_output_name<S: Into<String>>(mut self, name: S) -> Self {
         self.output_name = Some(name.into());
         self
     }
 
+    #[must_use]
     pub fn with_threads(mut self, threads: usize) -> Self {
         self.threads = threads;
         self
     }
 
+    #[must_use]
     pub fn with_quality(mut self, quality: QualityPreference) -> Self {
         self.quality = quality;
         self
     }
 
+    #[must_use]
     pub fn with_format(mut self, format: VideoFormat) -> Self {
         self.format = format;
         self
     }
 
+    #[must_use]
     pub fn with_start_ms(mut self, ms: u64) -> Self {
         self.start_ms = Some(ms);
         self
     }
 
+    #[must_use]
     pub fn with_end_ms(mut self, ms: u64) -> Self {
         self.end_ms = Some(ms);
         self
     }
 
+    #[must_use]
     pub fn with_buffer_ms(mut self, ms: u64) -> Self {
         self.buffer_ms = Some(ms);
         self
     }
 
+    #[must_use]
     pub fn with_progress_hook(mut self, hook: ProgressCallback) -> Self {
         self.progress_hook = Some(hook);
         self
     }
 
+    #[must_use]
     pub fn with_cancel_rx(mut self, rx: tokio::sync::watch::Receiver<bool>) -> Self {
         self.cancel_rx = Some(rx);
         self
@@ -135,31 +162,31 @@ impl DownloadOptions {
 impl std::fmt::Debug for DownloadOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DownloadOptions")
-            .field("output_dir", &self.output_dir)
-            .field("output_name", &self.output_name)
-            .field("threads", &self.threads)
-            .field("quality", &self.quality)
-            .field("format", &self.format)
-            .field("start_ms", &self.start_ms)
-            .field("end_ms", &self.end_ms)
-            .field("buffer_ms", &self.buffer_ms)
-            .field(
-                "progress_hook",
-                &if self.progress_hook.is_some() {
-                    "Some(Callback)"
-                } else {
-                    "None"
-                },
-            )
-            .field(
-                "cancel_rx",
-                &if self.cancel_rx.is_some() {
-                    "Some(Receiver)"
-                } else {
-                    "None"
-                },
-            )
-            .finish()
+         .field("output_dir", &self.output_dir)
+         .field("output_name", &self.output_name)
+         .field("threads", &self.threads)
+         .field("quality", &self.quality)
+         .field("format", &self.format)
+         .field("start_ms", &self.start_ms)
+         .field("end_ms", &self.end_ms)
+         .field("buffer_ms", &self.buffer_ms)
+         .field(
+             "progress_hook",
+             &if self.progress_hook.is_some() {
+                 "Some(Callback)"
+             } else {
+                 "None"
+             },
+         )
+         .field(
+             "cancel_rx",
+             &if self.cancel_rx.is_some() {
+                 "Some(Receiver)"
+             } else {
+                 "None"
+             },
+         )
+         .finish()
     }
 }
 
@@ -180,7 +207,9 @@ impl Default for DownloadOptions {
     }
 }
 
-// --- Platform & Metadata specific types ---
+// ---------------------------------------------------------------------------
+// Platform & metadata types
+// ---------------------------------------------------------------------------
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -213,8 +242,10 @@ pub enum StreamStatus {
 pub struct StreamMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_id: Option<i64>,
+    /// Parsed VOD/stream start time. `None` for streams where this is unknown.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_time: Option<String>,
+    pub start_time: Option<DateTime<Utc>>,
+    /// Stream or VOD duration in **seconds**. `None` for live streams.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -240,7 +271,10 @@ pub struct StreamMetadata {
     pub platform: Platform,
 }
 
-// --- Kick Internal Types ---
+// ---------------------------------------------------------------------------
+// Kick internal types
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub(crate) struct Chatroom {
     pub id: Option<i64>,
@@ -285,14 +319,14 @@ impl Default for ChannelField {
 
 fn parse_srcset(s: &str) -> Option<String> {
     s.split(',')
-        .filter_map(|part| {
-            let mut pieces = part.trim().rsplitn(2, ' ');
-            let width = pieces.next()?.trim_end_matches('w').parse::<u32>().ok()?;
-            let url = pieces.next()?;
-            Some((width, url.to_string()))
-        })
-        .max_by_key(|(w, _)| *w)
-        .map(|(_, url)| url)
+     .filter_map(|part| {
+         let mut pieces = part.trim().rsplitn(2, ' ');
+         let width = pieces.next()?.trim_end_matches('w').parse::<u32>().ok()?;
+         let url = pieces.next()?;
+         Some((width, url.to_string()))
+     })
+     .max_by_key(|(w, _)| *w)
+     .map(|(_, url)| url)
 }
 
 fn deserialize_thumbnail<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
@@ -395,6 +429,7 @@ pub(crate) struct KickClipData {
     pub title: Option<String>,
     pub thumbnail_url: Option<String>,
     pub views: Option<i64>,
+    /// Duration in **seconds** as returned by the Kick API.
     pub duration: Option<f64>,
     #[serde(rename = "created_at")]
     pub created_at: Option<String>,
@@ -408,7 +443,9 @@ pub(crate) struct KickClipChannel {
     pub username: Option<String>,
 }
 
-// --- Twitch GraphQL Types ---
+// ---------------------------------------------------------------------------
+// Twitch GraphQL types
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct TwitchGqlClipResponse {
@@ -537,6 +574,35 @@ pub(crate) struct PersistedQuery {
     pub sha256_hash: &'static str,
 }
 
+// ---------------------------------------------------------------------------
+// Platform-specific chat options
+// ---------------------------------------------------------------------------
+
+/// Per-platform settings for chat downloading.
+///
+/// Pass this to [`ChatOptions::with_platform_options`] to tune behaviour for
+/// a specific platform without exposing those knobs to callers who don't care.
+#[derive(Debug, Clone)]
+pub enum PlatformChatOptions {
+    /// Options that only affect Kick chat downloads.
+    Kick {
+        /// Number of concurrent chat-history requests per batch window.
+        ///
+        /// Higher values speed up retrieval at the cost of more open connections.
+        /// Default: `10`.
+        concurrency: usize,
+        /// Consecutive empty response batches before treating the chat as ended.
+        ///
+        /// Only relevant when `end_ms` is unset (open-ended download).
+        /// Default: `6`.
+        empty_cycle_threshold: usize,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Chat options
+// ---------------------------------------------------------------------------
+
 #[derive(Clone)]
 pub struct ChatOptions {
     pub output_dir: Option<PathBuf>,
@@ -545,93 +611,126 @@ pub struct ChatOptions {
     pub end_ms: Option<u64>,
     pub buffer_ms: Option<u64>,
     pub max_retries: usize,
-    pub kick_concurrency: usize,
-    pub empty_cycle_threshold: usize,
+    /// Platform-specific tuning. If `None`, sensible per-platform defaults apply.
+    pub platform_options: Option<PlatformChatOptions>,
     pub progress_hook: Option<ProgressCallback>,
     pub cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
-// --- BUILDER PATTERN IMPLEMENTATION FOR CHAT OPTIONS ---
 impl ChatOptions {
+    // -- builder methods -----------------------------------------------------
+
+    #[must_use]
     pub fn with_output_dir<P: Into<PathBuf>>(mut self, dir: P) -> Self {
         self.output_dir = Some(dir.into());
         self
     }
 
+    #[must_use]
     pub fn with_output_name<S: Into<String>>(mut self, name: S) -> Self {
         self.output_name = Some(name.into());
         self
     }
 
+    #[must_use]
     pub fn with_start_ms(mut self, ms: u64) -> Self {
         self.start_ms = Some(ms);
         self
     }
 
+    #[must_use]
     pub fn with_end_ms(mut self, ms: u64) -> Self {
         self.end_ms = Some(ms);
         self
     }
 
+    #[must_use]
     pub fn with_buffer_ms(mut self, ms: u64) -> Self {
         self.buffer_ms = Some(ms);
         self
     }
 
+    #[must_use]
     pub fn with_max_retries(mut self, retries: usize) -> Self {
         self.max_retries = retries;
         self
     }
 
-    pub fn with_kick_concurrency(mut self, concurrency: usize) -> Self {
-        self.kick_concurrency = concurrency;
+    /// Override platform-specific options.
+    ///
+    /// ```rust
+    /// use stream_extractor::{ChatOptions, PlatformChatOptions};
+    ///
+    /// let opts = ChatOptions::default()
+    ///     .with_platform_options(PlatformChatOptions::Kick {
+    ///         concurrency: 20,
+    ///         empty_cycle_threshold: 10,
+    ///     });
+    /// ```
+    #[must_use]
+    pub fn with_platform_options(mut self, opts: PlatformChatOptions) -> Self {
+        self.platform_options = Some(opts);
         self
     }
 
-    pub fn with_empty_cycle_threshold(mut self, threshold: usize) -> Self {
-        self.empty_cycle_threshold = threshold;
-        self
-    }
-
+    #[must_use]
     pub fn with_progress_hook(mut self, hook: ProgressCallback) -> Self {
         self.progress_hook = Some(hook);
         self
     }
 
+    #[must_use]
     pub fn with_cancel_rx(mut self, rx: tokio::sync::watch::Receiver<bool>) -> Self {
         self.cancel_rx = Some(rx);
         self
+    }
+
+    // -- internal accessors --------------------------------------------------
+
+    /// Number of concurrent Kick chat-history requests. Falls back to `10`.
+    pub(crate) fn kick_concurrency(&self) -> usize {
+        match &self.platform_options {
+            Some(PlatformChatOptions::Kick { concurrency, .. }) => *concurrency,
+            None => 10,
+        }
+    }
+
+    /// Empty-batch threshold for Kick. Falls back to `6`.
+    pub(crate) fn kick_empty_cycle_threshold(&self) -> usize {
+        match &self.platform_options {
+            Some(PlatformChatOptions::Kick { empty_cycle_threshold, .. }) => *empty_cycle_threshold,
+            None => 6,
+        }
     }
 }
 
 impl fmt::Debug for ChatOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ChatOptions")
-            .field("output_dir", &self.output_dir)
-            .field("output_name", &self.output_name)
-            .field("start_ms", &self.start_ms)
-            .field("end_ms", &self.end_ms)
-            .field("buffer_ms", &self.buffer_ms)
-            .field("max_retries", &self.max_retries)
-            .field("kick_concurrency", &self.kick_concurrency)
-            .field("empty_cycle_threshold", &self.empty_cycle_threshold)
-            .field(
-                "progress_hook",
-                &if self.progress_hook.is_some() {
-                    "Some(Callback)"
-                } else {
-                    "None"
-                },
-            )
-            .field(
-                "cancel_rx",
-                &if self.cancel_rx.is_some() {
-                    "Some(Receiver)"
-                } else {
-                    "None"
-                },
-            )
-            .finish()
+         .field("output_dir", &self.output_dir)
+         .field("output_name", &self.output_name)
+         .field("start_ms", &self.start_ms)
+         .field("end_ms", &self.end_ms)
+         .field("buffer_ms", &self.buffer_ms)
+         .field("max_retries", &self.max_retries)
+         .field("platform_options", &self.platform_options)
+         .field(
+             "progress_hook",
+             &if self.progress_hook.is_some() {
+                 "Some(Callback)"
+             } else {
+                 "None"
+             },
+         )
+         .field(
+             "cancel_rx",
+             &if self.cancel_rx.is_some() {
+                 "Some(Receiver)"
+             } else {
+                 "None"
+             },
+         )
+         .finish()
     }
 }
 
@@ -644,18 +743,23 @@ impl Default for ChatOptions {
             end_ms: None,
             buffer_ms: None,
             max_retries: 8,
-            kick_concurrency: 10,
-            empty_cycle_threshold: 6,
+            platform_options: None,
             progress_hook: None,
             cancel_rx: None,
         }
     }
 }
 
-// --- Chat Data Structures ---
+// ---------------------------------------------------------------------------
+// Chat data structures
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Badge {
-    pub r#type: String,
+    /// Badge type identifier (e.g. `"moderator"`, `"subscriber"`).
+    /// Serialised as `"type"` in JSON to match the existing wire format.
+    #[serde(rename = "type")]
+    pub kind: String,
     pub text: String,
 }
 
@@ -680,23 +784,32 @@ pub(crate) struct Message {
     pub chat_id: i64,
     pub user_id: i64,
     pub content: String,
-    pub r#type: String,
+    /// Message kind (e.g. `"chat"`). Serialised as `"type"` in JSON.
+    #[serde(rename = "type")]
+    pub kind: String,
     pub metadata: String,
     pub sender: Sender,
     pub created_at: String,
 }
 
+/// A saved chat message with precomputed timing fields relative to the
+/// stream start time.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MessageSaved {
     pub id: String,
     pub chat_id: i64,
     pub user_id: i64,
     pub content: String,
-    pub r#type: String,
+    /// Serialised as `"type"` in JSON to match the existing wire format.
+    #[serde(rename = "type")]
+    pub kind: String,
     pub metadata: String,
     pub sender: Sender,
+    /// Raw RFC 3339 timestamp.
     pub created_at_raw: String,
+    /// Seconds elapsed since stream start.
     pub created_at_secs: i64,
+    /// Human-readable offset `HH:MM:SS` from stream start.
     pub created_at_str: String,
 }
 
@@ -718,7 +831,7 @@ impl MessageSaved {
             chat_id: msg.chat_id,
             user_id: msg.user_id,
             content: msg.content.clone(),
-            r#type: msg.r#type.clone(),
+            kind: msg.kind.clone(),
             metadata: msg.metadata.clone(),
             sender: msg.sender.clone(),
             created_at_raw: msg.created_at.clone(),

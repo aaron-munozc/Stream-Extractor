@@ -17,6 +17,13 @@ use crate::types::{
     TwitchGqlVariables,
 };
 
+/// Twitch's own embedded web-player Client-ID, sourced from browser devtools.
+/// May need updating if Twitch rotates it.
+const TWITCH_GQL_CLIENT_ID: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
+
+/// Client-ID used by Twitch's comment API endpoints.
+const TWITCH_CHAT_CLIENT_ID: &str = "kd1unb4b3q4t58fwlpcbzcbnm76a8fp";
+
 const SAVE_CHANNEL_CAPACITY: usize = 4096;
 const KICK_STEP_SECS: i64 = 5;
 
@@ -64,6 +71,7 @@ async fn fetch_json_with_retries(
                         tokio::time::sleep(std::time::Duration::from_secs(ra + 1)).await;
                         continue;
                     }
+                    // No Retry-After: fall through to exponential backoff below
                 } else if status.is_client_error() {
                     return Err(Error::InvalidUrl(url.to_string()));
                 } else {
@@ -89,7 +97,7 @@ async fn fetch_json_with_retries(
         tokio::time::sleep(std::time::Duration::from_millis(
             (backoff_ms + jitter).min(10_000),
         ))
-        .await;
+            .await;
     }
 }
 
@@ -109,12 +117,7 @@ pub(crate) async fn download_chat_internal(
         message: "Initializing chat targets...".into(),
     });
 
-    let stream_start = meta
-        .start_time
-        .as_deref()
-        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&Utc))
-        .unwrap_or_else(Utc::now);
+    let stream_start = meta.start_time.unwrap_or_else(Utc::now);
 
     let duration_ms = meta.duration.unwrap_or(0) as u64 * 1000;
     let start_offset_ms = options.start_ms.unwrap_or(0);
@@ -160,15 +163,21 @@ pub(crate) async fn download_chat_internal(
     let tmp_path = final_output_path.with_extension("jsonl.tmp");
     let writer_tmp = tmp_path.clone();
 
+    let (err_tx, mut err_rx) = tokio::sync::oneshot::channel::<std::io::Error>();
+
     let writer_task = tokio::spawn(async move {
-        let file = async_fs::File::create(&writer_tmp).await.unwrap();
-        let mut buf_writer = AsyncBufWriter::new(file);
+        let file = match async_fs::File::create(&writer_tmp).await {
+            Ok(f) => f,
+            Err(e) => { let _ = err_tx.send(e); return; }
+        };
+        let mut buf = AsyncBufWriter::new(file);
         while let Some(line) = rx.recv().await {
-            let _ = buf_writer.write_all(line.as_bytes()).await;
-            let _ = buf_writer.write_all(b"\n").await;
+            if buf.write_all(line.as_bytes()).await.is_err()
+                || buf.write_all(b"\n").await.is_err() { break; }
         }
-        let _ = buf_writer.flush().await;
+        let _ = buf.flush().await;
     });
+
 
     let mut seen_msg_ids = HashSet::new();
 
@@ -176,7 +185,7 @@ pub(crate) async fn download_chat_internal(
         let mut video_id = meta.vod_uuid.clone().ok_or(Error::MissingId)?;
         let is_clip = !video_id.chars().all(char::is_numeric);
 
-        let twitch_client = crate::http::Client::new();
+        let twitch_client = &client.inner;
 
         let (clip_offset_sec, clip_duration_sec) = if is_clip {
             report(ProgressPayload::Downloading {
@@ -190,7 +199,7 @@ pub(crate) async fn download_chat_internal(
 
             let resp = twitch_client
                 .post("https://gql.twitch.tv/gql")
-                .header("Client-ID", "kimne78kx3ncx6brgo4mv6wki5h1ko")
+                .header("Client-ID", TWITCH_GQL_CLIENT_ID)
                 .json(&clip_query)
                 .send()
                 .await?;
@@ -255,7 +264,7 @@ pub(crate) async fn download_chat_internal(
 
             let resp = twitch_client
                 .post("https://gql.twitch.tv/gql")
-                .header("Client-ID", "kd1unb4b3q4t58fwlpcbzcbnm76a8fp")
+                .header("Client-ID", TWITCH_CHAT_CLIENT_ID)
                 .json(&body)
                 .send()
                 .await?;
@@ -325,9 +334,9 @@ pub(crate) async fn download_chat_internal(
                                     "staff" => "⛨",
                                     _ => "",
                                 }
-                                .to_string();
+                                    .to_string();
                                 badges.push(crate::types::Badge {
-                                    r#type: set_id,
+                                    kind: set_id,
                                     text,
                                 });
                             }
@@ -338,13 +347,13 @@ pub(crate) async fn download_chat_internal(
                         }
                     }
 
-                    let commenter_id = node
-                        .commenter
-                        .as_ref()
-                        .and_then(|c| c.id.clone())
-                        .unwrap_or_else(|| "0".into())
-                        .parse()
-                        .unwrap_or(0);
+                    let commenter_id: i64 = node.commenter.as_ref()
+                                                .and_then(|c| c.id.as_deref())
+                                                .and_then(|s| s.parse().ok())
+                                                .unwrap_or_else(|| {
+                                                    log::warn!("Failed to parse commenter ID, defaulting to 0");
+                                                    0
+                                                });
 
                     let commenter_login = node
                         .commenter
@@ -360,10 +369,13 @@ pub(crate) async fn download_chat_internal(
 
                     let msg = crate::types::Message {
                         id: msg_id,
-                        chat_id: video_id.parse().unwrap_or(0),
+                        chat_id: video_id.parse().unwrap_or_else(|_| {
+                            log::warn!("Failed to parse chat ID from video ID, defaulting to 0");
+                            0
+                        }),
                         user_id: commenter_id,
                         content,
-                        r#type: "chat".into(),
+                        kind: "chat".into(),
                         metadata: "".into(),
                         sender: crate::types::Sender {
                             id: commenter_id,
@@ -376,7 +388,7 @@ pub(crate) async fn download_chat_internal(
                         },
                         created_at: (stream_start
                             + ChronoDuration::milliseconds(absolute_msg_ms as i64))
-                        .to_rfc3339(),
+                            .to_rfc3339(),
                     };
 
                     let _ = tx
@@ -389,11 +401,10 @@ pub(crate) async fn download_chat_internal(
 
                 if window_length_ms > 0 {
                     let current_ms = (max_page_offset * 1000.0) - (clip_offset_sec * 1000.0);
-                    let pct = (((current_ms - start_offset_ms as f64) / window_length_ms as f64)
-                        * 100.0)
-                        .clamp(0.0, 100.0);
+                    let pct = ((current_ms - start_offset_ms as f64) / window_length_ms as f64)
+                        * 100.0;
                     report(ProgressPayload::Downloading {
-                        percent: pct as i64,
+                        percent: pct as u8,
                         message: "Paginating Twitch chat...".into(),
                     });
                 }
@@ -437,7 +448,7 @@ pub(crate) async fn download_chat_internal(
 
             let mut starts = Vec::new();
             let mut candidate = next_start;
-            for _ in 0..options.kick_concurrency {
+            for _ in 0..options.kick_concurrency() {
                 if effective_end_ms > 0
                     && (candidate - stream_start).num_milliseconds() as u64 >= effective_end_ms
                 {
@@ -457,7 +468,7 @@ pub(crate) async fn download_chat_internal(
                     chat_id
                 ))?;
                 url.query_pairs_mut()
-                    .append_pair("start_time", &to_kick_timestamp(*st));
+                   .append_pair("start_time", &to_kick_timestamp(*st));
                 let url_str = url.to_string();
                 let cancel_ref = options.cancel_rx.clone();
                 let cl = client.clone();
@@ -493,7 +504,7 @@ pub(crate) async fn download_chat_internal(
                 empty_cycles = 0;
             } else {
                 empty_cycles += 1;
-                if effective_end_ms == 0 && empty_cycles >= options.empty_cycle_threshold {
+                if effective_end_ms == 0 && empty_cycles >= options.kick_empty_cycle_threshold() {
                     break;
                 }
             }
@@ -503,9 +514,9 @@ pub(crate) async fn download_chat_internal(
             if window_length_ms > 0 {
                 let elapsed =
                     (next_start - stream_start).num_milliseconds() as f64 - start_offset_ms as f64;
-                let pct = ((elapsed / window_length_ms as f64) * 100.0).clamp(0.0, 100.0);
+                let pct = (elapsed / window_length_ms as f64) * 100.0;
                 report(ProgressPayload::Downloading {
-                    percent: pct as i64,
+                    percent: pct as u8,
                     message: "Fetching Kick chat buckets...".into(),
                 });
             }
@@ -517,7 +528,11 @@ pub(crate) async fn download_chat_internal(
     }
 
     drop(tx);
-    let _ = writer_task.await;
+
+    writer_task.await.ok();
+    if let Ok(e) = err_rx.try_recv() {
+        return Err(Error::Io(e));
+    }
     async_fs::rename(&tmp_path, &final_output_path).await?;
 
     report(ProgressPayload::Done);

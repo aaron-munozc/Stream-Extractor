@@ -3,10 +3,7 @@ use url::Url;
 
 use crate::client::StreamClient;
 use crate::error::Result;
-use crate::types::{
-    ChannelField, KickChannelResponse, KickClipResponse, KickVideoResponse, Platform,
-    StreamMetadata, StreamStatus,
-};
+use crate::types::{parse_datetime, ChannelField, KickChannelResponse, KickClipResponse, KickVideoResponse, Platform, StreamMetadata, StreamStatus};
 
 pub(crate) enum KickStream {
     Vod(String),
@@ -78,7 +75,7 @@ pub(crate) async fn fetch_kick_video_api(
 
     if let Some(ls) = parsed.livestream {
         meta.title = ls.session_title;
-        meta.start_time = ls.start_time;
+        meta.start_time = parse_datetime(ls.start_time);
         meta.duration = ls.duration;
         meta.thumbnail_url = ls.thumbnail;
 
@@ -144,8 +141,8 @@ pub(crate) async fn fetch_kick_clip_api(
         title: clip.title,
         thumbnail_url: clip.thumbnail_url,
         views: clip.views,
-        start_time: clip.created_at,
-        duration: clip.duration.map(|sec| (sec * 1000.0) as i64),
+        start_time: parse_datetime(clip.created_at),
+        duration: clip.duration.map(|sec| sec as i64),
         source: clip.video_url.clone(),
         playback_url: clip.video_url,
         username: clip.channel.as_ref().and_then(|c| c.username.clone()),
@@ -201,7 +198,7 @@ pub(crate) async fn fetch_kick_channel_api(
         chat_id: parsed.chatroom.and_then(|c| c.id).or(parsed.id),
         stream_status: Some(status),
         title,
-        start_time: start,
+        start_time: parse_datetime(start),
         viewer_count: viewers,
         thumbnail_url: thumb,
         ..Default::default()

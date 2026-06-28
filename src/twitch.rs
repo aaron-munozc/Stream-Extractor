@@ -6,7 +6,12 @@ use urlencoding::encode;
 
 use crate::client::StreamClient;
 use crate::error::Result;
-use crate::types::{Platform, StreamMetadata, StreamStatus};
+use crate::types::{parse_datetime, Platform, StreamMetadata, StreamStatus};
+
+
+/// Twitch's own embedded web-player Client-ID, sourced from browser devtools.
+/// May need updating if Twitch rotates it.
+const TWITCH_GQL_CLIENT_ID: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
 
 // ----------------- Internal Twitch Specific DTOs -----------------
 
@@ -111,7 +116,7 @@ async fn fetch_twitch_video_graphql(
     let resp = client
         .inner
         .post(url)
-        .header("Client-ID", "kimne78kx3ncx6brgo4mv6wki5h1ko")
+        .header("Client-ID", TWITCH_GQL_CLIENT_ID)
         .json(&body)
         .send()
         .await?;
@@ -143,7 +148,7 @@ async fn fetch_twitch_access_token(
     let gql_resp = client
         .inner
         .post("https://gql.twitch.tv/gql")
-        .header("Client-ID", "kimne78kx3ncx6brgo4mv6wki5h1ko")
+        .header("Client-ID", TWITCH_GQL_CLIENT_ID)
         .json(&gql_body)
         .send()
         .await?;
@@ -174,14 +179,18 @@ pub(crate) async fn fetch_twitch_clip_metadata(
 ) -> Result<Option<StreamMetadata>> {
     let url = "https://gql.twitch.tv/gql";
 
+    // Combine metadata, video qualities, and the playback access token into a single robust query
     let info_body = serde_json::json!({
-        "query": format!("query {{ clip(slug: \"{}\") {{ id, title, durationSeconds, viewCount, createdAt, thumbnailURL, broadcaster {{ displayName, login }} }} }}", clip_id)
+        "query": format!(
+            "query {{ clip(slug: \"{}\") {{ id, title, durationSeconds, viewCount, createdAt, thumbnailURL, broadcaster {{ displayName, login }}, videoQualities {{ sourceURL }}, playbackAccessToken(params: {{ platform: \"web\", playerBackend: \"mediaplayer\", playerType: \"embed\" }}) {{ signature, value }} }} }}",
+            clip_id
+        )
     });
 
     let info_resp = client
         .inner
         .post(url)
-        .header("Client-ID", "kimne78kx3ncx6brgo4mv6wki5h1ko")
+        .header("Client-ID", TWITCH_GQL_CLIENT_ID)
         .json(&info_body)
         .send()
         .await?;
@@ -189,58 +198,40 @@ pub(crate) async fn fetch_twitch_clip_metadata(
     if info_resp.status() == StatusCode::NOT_FOUND {
         return Ok(None);
     }
-    let info_resp = info_resp.error_for_status()?;
 
+    let info_resp = info_resp.error_for_status()?;
     let parsed: serde_json::Value = info_resp.json().await?;
     let clip = &parsed["data"]["clip"];
+
     if clip.is_null() {
         return Ok(None);
     }
 
-    let token_body = serde_json::json!({
-        "operationName": "VideoAccessToken_Clip",
-        "variables": { "slug": clip_id },
-        "extensions": {
-            "persistedQuery": {
-                "version": 1,
-                "sha256Hash": "36b89d2507fce29e5ca551df756d27c1cfe079e2609642b4390aa4c35796eb11"
-            }
-        }
-    });
-
-    let token_resp = client
-        .inner
-        .post(url)
-        .header("Client-ID", "kimne78kx3ncx6brgo4mv6wki5h1ko")
-        .json(&token_body)
-        .send()
-        .await?;
-
     let mut mp4_url = String::new();
-    if token_resp.status().is_success() {
-        let token_val: serde_json::Value = token_resp.json().await?;
-        if let Some(qualities) = token_val["data"]["clip"]["videoQualities"].as_array()
-            && let Some(best) = qualities.first()
-        {
+
+    // Extract the highest quality source URL and append auth tokens securely
+    if let Some(qualities) = clip["videoQualities"].as_array() {
+        if let Some(best) = qualities.first() {
             let source_url = best["sourceURL"].as_str().unwrap_or("");
-            let sig = token_val["data"]["clip"]["playbackAccessToken"]["signature"]
-                .as_str()
-                .unwrap_or("");
-            let token = token_val["data"]["clip"]["playbackAccessToken"]["value"]
-                .as_str()
-                .unwrap_or("");
+            let sig = clip["playbackAccessToken"]["signature"].as_str().unwrap_or("");
+            let token = clip["playbackAccessToken"]["value"].as_str().unwrap_or("");
 
             if !source_url.is_empty() {
-                mp4_url = format!(
-                    "{}?sig={}&token={}",
-                    source_url,
-                    sig,
-                    urlencoding::encode(token)
-                );
+                if source_url.contains("sig=") {
+                    // Sometimes Twitch embeds the signature directly into the sourceURL
+                    mp4_url = source_url.to_string();
+                } else if !sig.is_empty() && !token.is_empty() {
+                    // Append the tokens to the raw source URL
+                    let sep = if source_url.contains('?') { "&" } else { "?" };
+                    mp4_url = format!("{}{sep}sig={}&token={}", source_url, sig, encode(token));
+                } else {
+                    mp4_url = source_url.to_string();
+                }
             }
         }
     }
 
+    // Legacy fallback (might return 403 on newer clips, but acts as a safety net)
     if mp4_url.is_empty() {
         let thumb = clip["thumbnailURL"].as_str().unwrap_or("");
         if let Some(idx) = thumb.find("-preview") {
@@ -256,7 +247,7 @@ pub(crate) async fn fetch_twitch_clip_metadata(
         thumbnail_url: clip["thumbnailURL"].as_str().map(|s| s.to_string()),
         duration: clip["durationSeconds"].as_i64(),
         views: clip["viewCount"].as_i64(),
-        start_time: clip["createdAt"].as_str().map(|s| s.to_string()),
+        start_time: parse_datetime(clip["createdAt"].as_str().map(|s| s.to_string())),
         username: clip["broadcaster"]["login"].as_str().map(|s| s.to_string()),
         platform: Platform::Twitch,
         stream_status: Some(StreamStatus::Vod),
@@ -265,6 +256,7 @@ pub(crate) async fn fetch_twitch_clip_metadata(
         ..Default::default()
     }))
 }
+
 pub(crate) async fn fetch_twitch_metadata(
     client: &StreamClient,
     video_id: &str,
@@ -353,7 +345,7 @@ pub(crate) async fn fetch_twitch_metadata(
         duration,
         views,
         stream_status: Some(StreamStatus::Vod),
-        start_time,
+        start_time: parse_datetime(start_time),
         username,
         platform: Platform::Twitch,
         source: Some(master_url),

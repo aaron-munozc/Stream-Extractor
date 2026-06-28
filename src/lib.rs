@@ -59,7 +59,7 @@ impl Stream {
 
     pub async fn download_video(&self, options: DownloadOptions) -> Result<std::path::PathBuf> {
         info!(
-            "Beginning resource acquisition pipeline on platform: {}",
+            "Starting video download on platform: {}",
             self.metadata.platform
         );
         downloader::download_vod_internal(&self.client, &self.metadata, options).await
@@ -67,7 +67,7 @@ impl Stream {
 
     pub async fn download_chat(&self, options: ChatOptions) -> Result<std::path::PathBuf> {
         info!(
-            "Beginning chat capture timeline on platform: {}",
+            "Starting chat download on platform: {}",
             self.metadata.platform
         );
         chat::download_chat_internal(&self.client, &self.metadata, options).await
@@ -83,7 +83,7 @@ impl Deref for Stream {
 }
 
 pub async fn fetch_stream(client: &StreamClient, url: &str) -> Result<Stream> {
-    info!("Resolving engine metadata rules for target: {}", url);
+    info!("Fetching stream metadata for: {}", url);
 
     let parsed_url = url::Url::parse(url).map_err(|_| Error::InvalidUrl(url.to_string()))?;
     let host = parsed_url.host_str().unwrap_or("");
@@ -91,11 +91,11 @@ pub async fn fetch_stream(client: &StreamClient, url: &str) -> Result<Stream> {
     let meta_opt = if host.contains("twitch.tv") {
         match twitch::get_twitch_stream_info(url) {
             twitch::TwitchStream::Vod(id) => {
-                debug!("Discovered active Twitch VOD footprint. Sub-ID: {:?}", id);
+                debug!("Twitch VOD identified, video ID: {:?}", id);
                 twitch::fetch_twitch_metadata(client, &id).await?
             }
             twitch::TwitchStream::Clip(id) => {
-                debug!("Discovered active Twitch Clip footprint. Clip-ID: {:?}", id);
+                debug!("Twitch Clip identified, clip ID: {:?}", id);
                 twitch::fetch_twitch_clip_metadata(client, &id).await?
             }
             twitch::TwitchStream::Invalid => {
@@ -106,18 +106,18 @@ pub async fn fetch_stream(client: &StreamClient, url: &str) -> Result<Stream> {
     } else if host.contains("kick.com") {
         match kick::get_kick_stream_info(url) {
             kick::KickStream::Vod(uuid) => {
-                info!("Discovered Kick VOD signature. Manifest key: {}", uuid);
+                info!("Kick VOD identified, video ID: {}", uuid);
                 kick::fetch_kick_video_api(client, &uuid).await?
             }
             kick::KickStream::Live(slug) => {
                 info!(
-                    "Discovered Kick Live Channel footprint. Target profile: {}",
+                    "Kick Live Channel identified, channel: {}",
                     slug
                 );
                 kick::fetch_kick_channel_api(client, &slug).await?
             }
             kick::KickStream::Clip(clip_id) => {
-                info!("Discovered Kick Clip footprint. Clip ID: {}", clip_id);
+                info!("Kick Clip identified, clip ID: {}", clip_id);
                 kick::fetch_kick_clip_api(client, &clip_id).await?
             }
             kick::KickStream::Invalid => {
@@ -126,7 +126,7 @@ pub async fn fetch_stream(client: &StreamClient, url: &str) -> Result<Stream> {
             }
         }
     } else {
-        warn!("Target reference structure is un-routable: {}", url);
+        warn!("Unrecognized URL format: {}", url);
         return Err(Error::InvalidUrl(url.to_string()));
     };
 

@@ -72,6 +72,16 @@ pub(crate) async fn get_qualities_internal(
     client: &StreamClient,
     m3u8_url: &str,
 ) -> Result<Vec<StreamQuality>> {
+    // [FIX] Early return for direct MP4s (Twitch Clips) to prevent feeding raw video bytes to the M3U8 parser
+    if m3u8_url.contains(".mp4") {
+        return Ok(vec![StreamQuality {
+            index: 0,
+            uri: m3u8_url.to_string(),
+            resolution: None,
+            bandwidth: None,
+        }]);
+    }
+
     let resp = client.inner.get(m3u8_url).send().await?.bytes().await?;
 
     match m3u8_rs::parse_playlist(&resp) {
@@ -114,6 +124,158 @@ pub(crate) async fn get_qualities_internal(
             e
         ))),
     }
+}
+
+async fn resolve_media_playlist(
+    client: &StreamClient,
+    m3u8_url: &str,
+    quality: QualityPreference,
+) -> Result<Url> {
+    let manifest_bytes = client.inner.get(m3u8_url).send().await?.bytes().await?;
+    match m3u8_rs::parse_playlist(&manifest_bytes) {
+        Ok((_, m3u8_rs::Playlist::MasterPlaylist(master))) => {
+            let base = Url::parse(m3u8_url)?;
+
+            let variant = match quality {
+                QualityPreference::Best => master.variants.iter().max_by_key(|v| v.bandwidth),
+                QualityPreference::Worst => master.variants.iter().min_by_key(|v| v.bandwidth),
+                QualityPreference::Height(target_height) => master
+                    .variants
+                    .iter()
+                    .filter(|v| v.resolution.is_some_and(|r| r.height == target_height))
+                    .max_by_key(|v| v.bandwidth)
+                    .or_else(|| master.variants.iter().max_by_key(|v| v.bandwidth)),
+                QualityPreference::Index(idx) => master.variants.get(idx),
+            }
+                .or_else(|| master.variants.first())
+                .ok_or(Error::PlaylistParse("No variants found in master playlist".into()))?;
+
+            let mut joined = base.join(&variant.uri)?;
+            if joined.query().is_none() && base.query().is_some() {
+                joined.set_query(base.query());
+            }
+            Ok(joined)
+        }
+        Ok((_, m3u8_rs::Playlist::MediaPlaylist(_))) => Ok(Url::parse(m3u8_url)?),
+        Err(e) => Err(Error::PlaylistParse(format!("Manifest Error: {:?}", e))),
+    }
+}
+
+async fn download_segment(
+    client: crate::http::Client,
+    url: Url,
+    path: PathBuf,
+    cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
+) -> Result<()> {
+    if let Some(ref rx) = cancel_rx {
+        if *rx.borrow() {
+            return Err(Error::Cancelled("User requested abort".into()));
+        }
+    }
+
+    let task = async {
+        let mut attempts = 0;
+        loop {
+            // .as_str() guarantees IntoUri trait bounds are met for wreq
+            match client.get(url.as_str()).send().await {
+                Ok(resp) => {
+                    let mut file = async_fs::File::create(&path).await?;
+                    let mut byte_stream = resp.bytes_stream();
+                    let mut failed = false;
+
+                    while let Some(chunk_res) = byte_stream.next().await {
+                        match chunk_res {
+                            Ok(chunk) => {
+                                file.write_all(&chunk).await?;
+                            }
+                            Err(e) => {
+                                failed = true;
+                                if attempts < RETRIES {
+                                    attempts += 1;
+                                    tokio::time::sleep(Duration::from_millis(
+                                        400 * attempts as u64,
+                                    ))
+                                        .await;
+                                    break;
+                                }
+                                return Err(Error::Network(e));
+                            }
+                        }
+                    }
+                    if !failed {
+                        file.flush().await?;
+                        break Ok(());
+                    }
+                }
+                Err(_e) if attempts < RETRIES => {
+                    attempts += 1;
+                    tokio::time::sleep(Duration::from_millis(400 * attempts as u64)).await;
+                }
+                Err(e) => return Err(Error::Network(e)),
+            }
+        }
+    };
+
+    if let Some(mut rx) = cancel_rx {
+        tokio::select! {
+            res = task => { res }
+            _ = async {
+                while rx.changed().await.is_ok() {
+                    if *rx.borrow() { break; }
+                }
+            } => {
+                Err(Error::Cancelled("Abort".into()))
+            }
+        }
+    } else {
+        task.await
+    }
+}
+
+async fn download_segments(
+    client: &StreamClient,
+    playlist_url: &Url,
+    selected: Vec<(usize, String)>,
+    options: &DownloadOptions,
+    tmp_path: &std::path::Path,
+) -> Result<Vec<(usize, PathBuf)>> {
+    let downloaded_count = Arc::new(AtomicU64::new(0));
+    let total_count = selected.len() as f64;
+
+    let mut paths_result = stream::iter(selected)
+        .map(|(idx, uri)| {
+            let inner_client = client.inner.clone();
+            let mut url = playlist_url.join(&uri).unwrap();
+            if url.query().is_none() && playlist_url.query().is_some() {
+                url.set_query(playlist_url.query());
+            }
+
+            let path = tmp_path.join(format!("{:08}.ts", idx));
+            let counter = downloaded_count.clone();
+            let cancel_rx = options.cancel_rx.clone();
+            let report_hook = options.progress_hook.clone();
+
+            async move {
+                download_segment(inner_client, url, path.clone(), cancel_rx).await?;
+
+                let completed = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                if let Some(ref hook) = report_hook {
+                    hook(ProgressPayload::Downloading {
+                        percent: ((completed as f64 / total_count) * 100.0) as u8,
+                        message: format!("Downloading {}/{}", completed, total_count),
+                    });
+                }
+                Ok::<(usize, PathBuf), Error>((idx, path))
+            }
+        })
+        .buffer_unordered(options.threads.clamp(1, MAX_CONCURRENCY))
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
+
+    paths_result.sort_by_key(|(idx, _)| *idx);
+    Ok(paths_result)
 }
 
 pub(crate) async fn download_vod_internal(
@@ -165,6 +327,7 @@ pub(crate) async fn download_vod_internal(
 
     let final_output_path = target_dir.join(target_name);
 
+
     if m3u8_url.contains(".mp4") {
         report(ProgressPayload::Downloading {
             percent: 0,
@@ -187,9 +350,9 @@ pub(crate) async fn download_vod_internal(
             file.write_all(&chunk).await?;
             downloaded += chunk.len() as u64;
             if total_size > 0.0 {
-                let pct = ((downloaded as f64 / total_size) * 100.0) as i64;
+                let pct = (downloaded as f64 / total_size) * 100.0;
                 report(ProgressPayload::Downloading {
-                    percent: pct,
+                    percent: pct as u8,
                     message: "Streaming MP4 to disk...".into(),
                 });
             }
@@ -205,39 +368,7 @@ pub(crate) async fn download_vod_internal(
         message: "Initializing M3U8 target...".into(),
     });
 
-    let manifest_bytes = client.inner.get(m3u8_url).send().await?.bytes().await?;
-    let playlist_url = match m3u8_rs::parse_playlist(&manifest_bytes) {
-        Ok((_, m3u8_rs::Playlist::MasterPlaylist(master))) => {
-            let base = Url::parse(m3u8_url)?;
-
-            let variant = match options.quality {
-                QualityPreference::Best => master.variants.iter().max_by_key(|v| v.bandwidth),
-
-                QualityPreference::Worst => master.variants.iter().min_by_key(|v| v.bandwidth),
-
-                QualityPreference::Height(target_height) => master
-                    .variants
-                    .iter()
-                    .filter(|v| v.resolution.is_some_and(|r| r.height == target_height))
-                    .max_by_key(|v| v.bandwidth)
-                    .or_else(|| master.variants.iter().max_by_key(|v| v.bandwidth)),
-
-                QualityPreference::Index(idx) => master.variants.get(idx),
-            }
-                .or_else(|| master.variants.first())
-                .ok_or(Error::PlaylistParse(
-                    "No variants found in master playlist".into(),
-                ))?;
-
-            let mut joined = base.join(&variant.uri)?;
-            if joined.query().is_none() && base.query().is_some() {
-                joined.set_query(base.query());
-            }
-            joined
-        }
-        Ok((_, m3u8_rs::Playlist::MediaPlaylist(_))) => Url::parse(m3u8_url)?,
-        Err(e) => return Err(Error::PlaylistParse(format!("Manifest Error: {:?}", e))),
-    };
+    let playlist_url = resolve_media_playlist(client, m3u8_url, options.quality).await?;
 
     log::info!("Fetching Media Playlist: {}", playlist_url);
 
@@ -300,60 +431,9 @@ pub(crate) async fn download_vod_internal(
         .prefix("vod_")
         .tempdir_in(&target_dir)?;
     let tmp_path = tmp.path().to_path_buf();
-    let downloaded_count = Arc::new(AtomicU64::new(0));
-    let total_count = selected.len() as f64;
 
-    let mut paths_result = stream::iter(selected).map(|(idx, uri)| {
-        let client = client.inner.clone();
-        let mut url = playlist_url.join(&uri).unwrap();
-        if url.query().is_none() && playlist_url.query().is_some() {
-            url.set_query(playlist_url.query());
-        }
+    let paths_result = download_segments(client, &playlist_url, selected, &options, &tmp_path).await?;
 
-        let path = tmp_path.join(format!("{:08}.ts", idx));
-        let counter = downloaded_count.clone();
-        let cancel_rx = options.cancel_rx.clone();
-        let report_hook = options.progress_hook.clone();
-
-        async move {
-            if let Some(ref rx) = cancel_rx && *rx.borrow() { return Err(Error::Cancelled("User requested abort".into())); }
-            let task = async {
-                let mut attempts = 0;
-                loop {
-                    // .as_str() guarantees IntoUri trait bounds are met for wreq
-                    match client.get(url.as_str()).send().await {
-                        Ok(resp) => {
-                            let mut file = async_fs::File::create(&path).await?;
-                            let mut byte_stream = resp.bytes_stream();
-                            let mut failed = false;
-
-                            while let Some(chunk_res) = byte_stream.next().await {
-                                match chunk_res {
-                                    Ok(chunk) => { file.write_all(&chunk).await?; }
-                                    Err(e) => {
-                                        failed = true;
-                                        if attempts < RETRIES { attempts += 1; tokio::time::sleep(Duration::from_millis(400 * attempts as u64)).await; break; }
-                                        return Err(Error::Network(e));
-                                    }
-                                }
-                            }
-                            if !failed { file.flush().await?; break Ok(()); }
-                        }
-                        Err(_e) if attempts < RETRIES => { attempts += 1; tokio::time::sleep(Duration::from_millis(400 * attempts as u64)).await; }
-                        Err(e) => return Err(Error::Network(e)),
-                    }
-                }
-            };
-
-            if let Some(mut rx) = cancel_rx { tokio::select! { res = task => { res?; } _ = rx.changed() => { if *rx.borrow() { return Err(Error::Cancelled("Abort".into())); } } } } else { task.await?; }
-
-            let completed = counter.fetch_add(1, Ordering::Relaxed) + 1;
-            if let Some(ref hook) = report_hook { hook(ProgressPayload::Downloading { percent: ((completed as f64 / total_count) * 100.0) as i64, message: format!("Downloading {}/{}", completed, total_count) }); }
-            Ok::<(usize, PathBuf), Error>((idx, path))
-        }
-    }).buffer_unordered(options.threads.clamp(1, MAX_CONCURRENCY)).collect::<Vec<_>>().await.into_iter().collect::<Result<Vec<_>>>()?;
-
-    paths_result.sort_by_key(|(idx, _)| *idx);
     let list_path = tmp_path.join("list.txt");
     async_fs::write(
         &list_path,
@@ -394,6 +474,8 @@ pub(crate) async fn download_vod_internal(
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
     if let Err(e) = run_ffmpeg(&arg_refs, options.cancel_rx.clone()).await {
+        log::error!("FFmpeg failed. Segments left in: {}", tmp_path.display());
+        let _ = tmp.into_path(); // keep dir on disk
         report(ProgressPayload::Error {
             message: e.to_string(),
         });
