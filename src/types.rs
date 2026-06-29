@@ -84,7 +84,7 @@ impl VideoFormat {
 }
 
 #[derive(Clone)]
-pub struct DownloadOptions {
+pub struct VodDownloadOptions {
     pub output_dir: Option<PathBuf>,
     pub output_name: Option<String>,
     pub threads: usize,
@@ -97,7 +97,7 @@ pub struct DownloadOptions {
     pub cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
-impl DownloadOptions {
+impl VodDownloadOptions {
     #[must_use]
     pub fn with_output_dir<P: Into<PathBuf>>(mut self, dir: P) -> Self {
         self.output_dir = Some(dir.into());
@@ -159,7 +159,7 @@ impl DownloadOptions {
     }
 }
 
-impl std::fmt::Debug for DownloadOptions {
+impl std::fmt::Debug for VodDownloadOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DownloadOptions")
          .field("output_dir", &self.output_dir)
@@ -190,7 +190,7 @@ impl std::fmt::Debug for DownloadOptions {
     }
 }
 
-impl Default for DownloadOptions {
+impl Default for VodDownloadOptions {
     fn default() -> Self {
         Self {
             output_dir: None,
@@ -580,7 +580,7 @@ pub(crate) struct PersistedQuery {
 
 /// Per-platform settings for chat downloading.
 ///
-/// Pass this to [`ChatOptions::with_platform_options`] to tune behaviour for
+/// Pass this to [`ChatDownloadOptions::with_platform_options`] to tune behaviour for
 /// a specific platform without exposing those knobs to callers who don't care.
 #[derive(Debug, Clone)]
 pub enum PlatformChatOptions {
@@ -604,7 +604,7 @@ pub enum PlatformChatOptions {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
-pub struct ChatOptions {
+pub struct ChatDownloadOptions {
     pub output_dir: Option<PathBuf>,
     pub output_name: Option<String>,
     pub start_ms: Option<u64>,
@@ -617,7 +617,7 @@ pub struct ChatOptions {
     pub cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
-impl ChatOptions {
+impl ChatDownloadOptions {
     // -- builder methods -----------------------------------------------------
 
     #[must_use]
@@ -659,9 +659,9 @@ impl ChatOptions {
     /// Override platform-specific options.
     ///
     /// ```rust
-    /// use stream_extractor::{ChatOptions, PlatformChatOptions};
+    /// use stream_extractor::{ChatDownloadOptions, PlatformChatOptions};
     ///
-    /// let opts = ChatOptions::default()
+    /// let opts = ChatDownloadOptions::default()
     ///     .with_platform_options(PlatformChatOptions::Kick {
     ///         concurrency: 20,
     ///         empty_cycle_threshold: 10,
@@ -704,7 +704,7 @@ impl ChatOptions {
     }
 }
 
-impl fmt::Debug for ChatOptions {
+impl fmt::Debug for ChatDownloadOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ChatOptions")
          .field("output_dir", &self.output_dir)
@@ -734,7 +734,7 @@ impl fmt::Debug for ChatOptions {
     }
 }
 
-impl Default for ChatOptions {
+impl Default for ChatDownloadOptions {
     fn default() -> Self {
         Self {
             output_dir: None,

@@ -12,7 +12,7 @@ use url::Url;
 use crate::client::StreamClient;
 use crate::error::{Error, Result};
 use crate::types::{
-    DownloadOptions, ProgressPayload, QualityPreference, StreamMetadata, StreamQuality,
+    VodDownloadOptions, ProgressPayload, QualityPreference, StreamMetadata, StreamQuality,
     StreamResolution,
 };
 
@@ -236,7 +236,7 @@ async fn download_segments(
     client: &StreamClient,
     playlist_url: &Url,
     selected: Vec<(usize, String)>,
-    options: &DownloadOptions,
+    options: &VodDownloadOptions,
     tmp_path: &std::path::Path,
 ) -> Result<Vec<(usize, PathBuf)>> {
     let downloaded_count = Arc::new(AtomicU64::new(0));
@@ -281,7 +281,7 @@ async fn download_segments(
 pub(crate) async fn download_vod_internal(
     client: &StreamClient,
     meta: &StreamMetadata,
-    options: DownloadOptions,
+    options: VodDownloadOptions,
 ) -> Result<PathBuf> {
     let m3u8_url = meta
         .playback_url
@@ -350,7 +350,7 @@ pub(crate) async fn download_vod_internal(
             file.write_all(&chunk).await?;
             downloaded += chunk.len() as u64;
             if total_size > 0.0 {
-                let pct = (downloaded as f64 / total_size) * 100.0;
+                let pct = ((downloaded as f64 / total_size) * 100.0).clamp(0.0, 100.0);
                 report(ProgressPayload::Downloading {
                     percent: pct as u8,
                     message: "Streaming MP4 to disk...".into(),

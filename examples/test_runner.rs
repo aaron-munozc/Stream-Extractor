@@ -1,7 +1,10 @@
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
-use stream_extractor::{fetch_stream, ChatOptions, DownloadOptions, ProgressPayload, StreamClient};
+use stream_extractor::{
+    fetch_stream, ChatDownloadOptions, VodDownloadOptions, ProgressCallback, ProgressPayload, StreamClient,
+};
 
 struct TestCase {
     name: &'static str,
@@ -14,7 +17,7 @@ struct TestCase {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Initialize the client using our updated StreamClient.
     // If compiled with --features wreq-backend, this automatically configures
-    // wreq with the Chrome 105 fingerprint and cookie store under the hood.
+    // wreq with the Chrome 126 fingerprint and cookie store under the hood.
     let client = StreamClient::new()?;
     let output_directory = PathBuf::from("target/test_downloads");
 
@@ -71,15 +74,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Accessing the platform metadata field directly via Deref trait
                 println!("     Metadata resolved! [{}]", stream.platform);
 
-                let progress_hook = Arc::new(|payload| match payload {
+                // Explicitly typing the Arc to ProgressCallback is strictly required here
+                // so the Rust compiler successfully coerces the closure into a dynamic trait object.
+                let progress_hook: ProgressCallback = Arc::new(|payload| match payload {
                     ProgressPayload::Downloading { percent, .. } => {
                         print!("\r     [Downloading] {}% ", percent);
-                        use std::io::Write;
                         let _ = std::io::stdout().flush();
                     }
                     ProgressPayload::Merging => {
                         print!("\r     [Ffmpeg] Stitching...                    ");
-                        use std::io::Write;
                         let _ = std::io::stdout().flush();
                     }
                     ProgressPayload::Done => println!("\n     Task Complete!"),
@@ -95,7 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // --- CHAT DOWNLOAD ---
                 let chat_file = format!("{}_chat", safe_name);
-                let chat_opts = ChatOptions {
+                let chat_opts = ChatDownloadOptions {
                     output_dir: Some(output_directory.clone()),
                     output_name: Some(chat_file),
                     start_ms: test.start_ms,
@@ -124,7 +127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // --- VIDEO DOWNLOAD ---
                 let video_file = format!("{}_video", safe_name);
-                let video_opts = DownloadOptions {
+                let video_opts = VodDownloadOptions {
                     output_dir: Some(output_directory.clone()),
                     output_name: Some(video_file),
                     start_ms: test.start_ms,

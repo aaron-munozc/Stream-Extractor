@@ -13,7 +13,7 @@ use crate::error::{Result};
 pub use error::Error;
 pub use client::StreamClient;
 pub use types::{
-    Badge, ChatOptions, DownloadOptions, Identity, MessageSaved, Platform, ProgressCallback,
+    Badge, ChatDownloadOptions, VodDownloadOptions, Identity, MessageSaved, Platform, ProgressCallback,
     ProgressPayload, QualityPreference, Sender, StreamMetadata, StreamQuality, StreamResolution,
     StreamStatus, VideoFormat,
 };
@@ -57,7 +57,7 @@ impl Stream {
         downloader::get_qualities_internal(&self.client, url).await
     }
 
-    pub async fn download_video(&self, options: DownloadOptions) -> Result<std::path::PathBuf> {
+    pub async fn download_video(&self, options: VodDownloadOptions) -> Result<std::path::PathBuf> {
         info!(
             "Starting video download on platform: {}",
             self.metadata.platform
@@ -65,7 +65,7 @@ impl Stream {
         downloader::download_vod_internal(&self.client, &self.metadata, options).await
     }
 
-    pub async fn download_chat(&self, options: ChatOptions) -> Result<std::path::PathBuf> {
+    pub async fn download_chat(&self, options: ChatDownloadOptions) -> Result<std::path::PathBuf> {
         info!(
             "Starting chat download on platform: {}",
             self.metadata.platform

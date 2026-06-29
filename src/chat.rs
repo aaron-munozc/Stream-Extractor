@@ -12,7 +12,7 @@ use crate::ProgressPayload;
 use crate::client::StreamClient;
 use crate::error::{Error, Result};
 use crate::types::{
-    ChatOptions, ChatResponse, MessageSaved, PersistedQuery, Platform, StreamMetadata,
+    ChatDownloadOptions, ChatResponse, MessageSaved, PersistedQuery, Platform, StreamMetadata,
     TwitchGqlClipResponse, TwitchGqlCommentsResponse, TwitchGqlExtensions, TwitchGqlRequest,
     TwitchGqlVariables,
 };
@@ -104,7 +104,7 @@ async fn fetch_json_with_retries(
 pub(crate) async fn download_chat_internal(
     client: &StreamClient,
     meta: &StreamMetadata,
-    options: ChatOptions,
+    options: ChatDownloadOptions,
 ) -> Result<PathBuf> {
     let report = |payload: ProgressPayload| {
         if let Some(ref hook) = options.progress_hook {
