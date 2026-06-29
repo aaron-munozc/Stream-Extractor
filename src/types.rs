@@ -329,7 +329,7 @@ fn parse_srcset(s: &str) -> Option<String> {
      .map(|(_, url)| url)
 }
 
-fn deserialize_thumbnail<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+fn deserialize_kick_response_thumbnail<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -399,7 +399,7 @@ pub(crate) struct Livestream {
     pub session_title: Option<String>,
     pub start_time: Option<String>,
     pub duration: Option<i64>,
-    #[serde(deserialize_with = "deserialize_thumbnail", default)]
+    #[serde(deserialize_with = "deserialize_kick_response_thumbnail", default)]
     pub thumbnail: Option<String>,
     #[serde(rename = "viewer_count", alias = "viewerCount", default)]
     pub viewer_count: Option<i64>,
@@ -573,6 +573,51 @@ pub(crate) struct PersistedQuery {
     pub version: u32,
     pub sha256_hash: &'static str,
 }
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TwitchClipQueryResponse {
+    pub data: TwitchClipQueryData,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TwitchClipQueryData {
+    pub clip: Option<TwitchClipDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TwitchClipDetails {
+    pub id: String,
+    pub title: Option<String>,
+    pub duration_seconds: Option<i64>,
+    pub view_count: Option<i64>,
+    pub created_at: Option<String>,
+    #[serde(rename = "thumbnailURL")]
+    pub thumbnail_url: Option<String>,
+    pub broadcaster: Option<TwitchBroadcaster>,
+    pub video_qualities: Option<Vec<TwitchVideoQuality>>,
+    pub playback_access_token: Option<TwitchPlaybackAccessToken>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TwitchBroadcaster {
+    pub login: Option<String>,
+    #[serde(rename = "displayName")]
+    pub display_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TwitchVideoQuality {
+    #[serde(rename = "sourceURL")]
+    pub source_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TwitchPlaybackAccessToken {
+    pub signature: Option<String>,
+    pub value: Option<String>,
+}
+
 
 // ---------------------------------------------------------------------------
 // Platform-specific chat options

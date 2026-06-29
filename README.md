@@ -44,7 +44,7 @@ use stream_extractor::{
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Initialize the HTTP client engine (configured by your feature flags)
     let client = StreamClient::new()?;
-    let target_url = "[https://kick.com/taodota/videos/428ae744-41be-4339-a01c-44e65181be85](https://kick.com/taodota/videos/428ae744-41be-4339-a01c-44e65181be85)";
+    let target_url = "https://kick.com/taodota/videos/428ae744-41be-4339-a01c-44e65181be85";
     let output_dir = PathBuf::from("target/media_vault");
 
     if !output_dir.exists() {

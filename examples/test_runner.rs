@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         TestCase {
             name: "Kick VOD (Mid-Stream 30 Sec Range)",
-            url: "https://kick.com/taodota/videos/428ae744-41be-4339-a01c-44e65181be85",
+            url: "https://kick.com/taodota/videos/a748634d-2975-4ce7-8ed2-c5c29c293672",
             start_ms: Some(60_000),
             end_ms: Some(90_000),
         },

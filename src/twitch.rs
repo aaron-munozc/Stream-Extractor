@@ -6,7 +6,7 @@ use urlencoding::encode;
 
 use crate::client::StreamClient;
 use crate::error::Result;
-use crate::types::{parse_datetime, Platform, StreamMetadata, StreamStatus};
+use crate::types::{parse_datetime, Platform, StreamMetadata, StreamStatus, TwitchClipQueryResponse};
 
 
 /// Twitch's own embedded web-player Client-ID, sourced from browser devtools.
@@ -200,21 +200,31 @@ pub(crate) async fn fetch_twitch_clip_metadata(
     }
 
     let info_resp = info_resp.error_for_status()?;
-    let parsed: serde_json::Value = info_resp.json().await?;
-    let clip = &parsed["data"]["clip"];
 
-    if clip.is_null() {
-        return Ok(None);
-    }
+    // Deserialize directly into our strictly typed structs
+    let parsed: TwitchClipQueryResponse = info_resp.json().await?;
+
+    let clip = match parsed.data.clip {
+        Some(c) => c,
+        None => return Ok(None),
+    };
 
     let mut mp4_url = String::new();
 
     // Extract the highest quality source URL and append auth tokens securely
-    if let Some(qualities) = clip["videoQualities"].as_array() {
+    if let Some(qualities) = &clip.video_qualities {
         if let Some(best) = qualities.first() {
-            let source_url = best["sourceURL"].as_str().unwrap_or("");
-            let sig = clip["playbackAccessToken"]["signature"].as_str().unwrap_or("");
-            let token = clip["playbackAccessToken"]["value"].as_str().unwrap_or("");
+            let source_url = best.source_url.as_deref().unwrap_or("");
+
+            let sig = clip.playback_access_token
+                          .as_ref()
+                          .and_then(|t| t.signature.as_deref())
+                          .unwrap_or("");
+
+            let token = clip.playback_access_token
+                            .as_ref()
+                            .and_then(|t| t.value.as_deref())
+                            .unwrap_or("");
 
             if !source_url.is_empty() {
                 if source_url.contains("sig=") {
@@ -233,7 +243,7 @@ pub(crate) async fn fetch_twitch_clip_metadata(
 
     // Legacy fallback (might return 403 on newer clips, but acts as a safety net)
     if mp4_url.is_empty() {
-        let thumb = clip["thumbnailURL"].as_str().unwrap_or("");
+        let thumb = clip.thumbnail_url.as_deref().unwrap_or("");
         if let Some(idx) = thumb.find("-preview") {
             mp4_url = format!("{}.mp4", &thumb[..idx]);
         } else {
@@ -243,20 +253,19 @@ pub(crate) async fn fetch_twitch_clip_metadata(
 
     Ok(Some(StreamMetadata {
         vod_uuid: Some(clip_id.to_string()),
-        title: clip["title"].as_str().map(|s| s.to_string()),
-        thumbnail_url: clip["thumbnailURL"].as_str().map(|s| s.to_string()),
-        duration: clip["durationSeconds"].as_i64(),
-        views: clip["viewCount"].as_i64(),
-        start_time: parse_datetime(clip["createdAt"].as_str().map(|s| s.to_string())),
-        username: clip["broadcaster"]["login"].as_str().map(|s| s.to_string()),
+        title: clip.title,
+        thumbnail_url: clip.thumbnail_url,
+        duration: clip.duration_seconds,
+        views: clip.view_count,
+        start_time: parse_datetime(clip.created_at),
+        username: clip.broadcaster.and_then(|b| b.login),
         platform: Platform::Twitch,
-        stream_status: Some(StreamStatus::Vod),
+        stream_status: Some(StreamStatus::Clip),
         source: Some(mp4_url.clone()),
         playback_url: Some(mp4_url),
         ..Default::default()
     }))
 }
-
 pub(crate) async fn fetch_twitch_metadata(
     client: &StreamClient,
     video_id: &str,
