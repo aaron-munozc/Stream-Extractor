@@ -1,5 +1,6 @@
 mod chat;
 mod client;
+#[cfg(feature = "vod")]
 mod downloader;
 pub mod error;
 mod kick;
@@ -12,10 +13,16 @@ use log::{debug, info, warn};
 use crate::error::{Result};
 pub use error::Error;
 pub use client::StreamClient;
+
+#[cfg(feature = "vod")]
 pub use types::{
-    Badge, ChatDownloadOptions, VodDownloadOptions, Identity, MessageSaved, Platform, ProgressCallback,
-    ProgressPayload, QualityPreference, Sender, StreamMetadata, StreamQuality, StreamResolution,
-    StreamStatus, VideoFormat,
+    VodDownloadOptions, QualityPreference, StreamQuality, StreamResolution, VideoFormat
+};
+
+pub use types::{
+    Badge, ChatDownloadOptions, Identity, MessageSaved, Platform, ProgressCallback,
+    ProgressPayload, Sender, StreamMetadata,
+    StreamStatus,
 };
 
 #[cfg(all(feature = "reqwest-backend", feature = "wreq-backend"))]
@@ -47,6 +54,7 @@ impl Stream {
         self.metadata
     }
 
+    #[cfg(feature = "vod")]
     pub async fn get_qualities(&self) -> Result<Vec<StreamQuality>> {
         let url = self
             .metadata
@@ -56,7 +64,7 @@ impl Stream {
             .ok_or(Error::NotFound)?;
         downloader::get_qualities_internal(&self.client, url).await
     }
-
+    #[cfg(feature = "vod")]
     pub async fn download_video(&self, options: VodDownloadOptions) -> Result<std::path::PathBuf> {
         info!(
             "Starting video download on platform: {}",

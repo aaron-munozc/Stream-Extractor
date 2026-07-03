@@ -22,14 +22,14 @@ pub(crate) fn parse_datetime(s: Option<String>) -> Option<DateTime<Utc>> {
 // ---------------------------------------------------------------------------
 // Download-specific types
 // ---------------------------------------------------------------------------
-
+#[cfg(feature = "vod")]
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct StreamResolution {
     pub width: u64,
     pub height: u64,
 }
-
+#[cfg(feature = "vod")]
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct StreamQuality {
@@ -52,6 +52,7 @@ pub enum ProgressPayload {
 
 pub type ProgressCallback = Arc<dyn Fn(ProgressPayload) + Send + Sync>;
 
+#[cfg(feature = "vod")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum QualityPreference {
@@ -61,7 +62,7 @@ pub enum QualityPreference {
     Height(u64),
     Index(usize),
 }
-
+#[cfg(feature = "vod")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum VideoFormat {
@@ -71,7 +72,7 @@ pub enum VideoFormat {
     Mov,
     Ts,
 }
-
+#[cfg(feature = "vod")]
 impl VideoFormat {
     pub fn extension(&self) -> &'static str {
         match self {
@@ -82,7 +83,7 @@ impl VideoFormat {
         }
     }
 }
-
+#[cfg(feature = "vod")]
 #[derive(Clone)]
 pub struct VodDownloadOptions {
     pub output_dir: Option<PathBuf>,
@@ -96,7 +97,7 @@ pub struct VodDownloadOptions {
     pub progress_hook: Option<ProgressCallback>,
     pub cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
 }
-
+#[cfg(feature = "vod")]
 impl VodDownloadOptions {
     #[must_use]
     pub fn with_output_dir<P: Into<PathBuf>>(mut self, dir: P) -> Self {
@@ -158,7 +159,7 @@ impl VodDownloadOptions {
         self
     }
 }
-
+#[cfg(feature = "vod")]
 impl std::fmt::Debug for VodDownloadOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DownloadOptions")
@@ -189,7 +190,7 @@ impl std::fmt::Debug for VodDownloadOptions {
          .finish()
     }
 }
-
+#[cfg(feature = "vod")]
 impl Default for VodDownloadOptions {
     fn default() -> Self {
         Self {

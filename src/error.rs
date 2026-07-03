@@ -11,6 +11,7 @@ pub enum Error {
     UrlParse(#[from] url::ParseError),
     #[error("JSON parsing error: {0}")]
     Json(#[from] serde_json::Error),
+    #[cfg(feature = "vod")]
     #[error("FFmpeg processing error: {0}")]
     Ffmpeg(String),
     #[error("Playlist format error: {0}")]

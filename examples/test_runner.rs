@@ -2,9 +2,15 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+// 1. We removed VodDownloadOptions from the main import block
 use stream_extractor::{
-    fetch_stream, ChatDownloadOptions, VodDownloadOptions, ProgressCallback, ProgressPayload, StreamClient,
+    fetch_stream, ChatDownloadOptions, ProgressCallback, ProgressPayload, StreamClient,
 };
+
+// 2. We import it only if the feature is active
+#[cfg(feature = "vod")]
+use stream_extractor::VodDownloadOptions;
 
 struct TestCase {
     name: &'static str,
@@ -15,9 +21,6 @@ struct TestCase {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Initialize the client using our updated StreamClient.
-    // If compiled with --features wreq-backend, this automatically configures
-    // wreq with the Chrome 126 fingerprint and cookie store under the hood.
     let client = StreamClient::new()?;
     let output_directory = PathBuf::from("target/test_downloads");
 
@@ -56,7 +59,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("==================================================");
     println!("     STREAM EXTRACTOR PIPELINE TEST MATRIX        ");
 
-    // Nice diagnostic printout to see which backend engine is currently under test
     #[cfg(feature = "wreq-backend")]
     println!("               [ ENGINE: WREQ ]                   ");
     #[cfg(feature = "reqwest-backend")]
@@ -71,11 +73,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         match fetch_stream(&client, test.url).await {
             Ok(stream) => {
-                // Accessing the platform metadata field directly via Deref trait
                 println!("     Metadata resolved! [{}]", stream.platform);
 
-                // Explicitly typing the Arc to ProgressCallback is strictly required here
-                // so the Rust compiler successfully coerces the closure into a dynamic trait object.
                 let progress_hook: ProgressCallback = Arc::new(|payload| match payload {
                     ProgressPayload::Downloading { percent, .. } => {
                         print!("\r     [Downloading] {}% ", percent);
@@ -97,6 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .to_lowercase();
 
                 // --- CHAT DOWNLOAD ---
+                // Chat is always available, so it does not need a feature gate
                 let chat_file = format!("{}_chat", safe_name);
                 let chat_opts = ChatDownloadOptions {
                     output_dir: Some(output_directory.clone()),
@@ -107,7 +107,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ..Default::default()
                 };
 
-                // Because `download_chat` takes `&self`, we don't consume the stream anymore!
                 let actual_chat_path = match stream.download_chat(chat_opts).await {
                     Ok(path) => path,
                     Err(e) => {
@@ -126,34 +125,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("      Chat Written: {} bytes", chat_size);
 
                 // --- VIDEO DOWNLOAD ---
-                let video_file = format!("{}_video", safe_name);
-                let video_opts = VodDownloadOptions {
-                    output_dir: Some(output_directory.clone()),
-                    output_name: Some(video_file),
-                    start_ms: test.start_ms,
-                    end_ms: test.end_ms,
-                    threads: 4,
-                    progress_hook: Some(progress_hook.clone()),
-                    ..Default::default()
-                };
+                // 3. Gate the video download execution logic
+                #[cfg(feature = "vod")]
+                {
+                    let video_file = format!("{}_video", safe_name);
+                    let video_opts = VodDownloadOptions {
+                        output_dir: Some(output_directory.clone()),
+                        output_name: Some(video_file),
+                        start_ms: test.start_ms,
+                        end_ms: test.end_ms,
+                        threads: 4,
+                        progress_hook: Some(progress_hook.clone()),
+                        ..Default::default()
+                    };
 
-                // Reusing the exact same stream reference for the video
-                let actual_video_path = match stream.download_video(video_opts).await {
-                    Ok(path) => path,
-                    Err(e) => {
-                        println!("      Video extraction failed: {:?}", e);
-                        failed_tests += 1;
-                        continue;
-                    }
-                };
+                    let actual_video_path = match stream.download_video(video_opts).await {
+                        Ok(path) => path,
+                        Err(e) => {
+                            println!("      Video extraction failed: {:?}", e);
+                            failed_tests += 1;
+                            continue; // Note: continue will break out of the scope block and move to the next loop iteration
+                        }
+                    };
 
-                assert!(
-                    actual_video_path.exists(),
-                    "Video file was reported successful but does not exist at {:?}",
-                    actual_video_path
-                );
-                let video_size = fs::metadata(&actual_video_path)?.len();
-                println!("      Video Written: {} bytes", video_size);
+                    assert!(
+                        actual_video_path.exists(),
+                        "Video file was reported successful but does not exist at {:?}",
+                        actual_video_path
+                    );
+                    let video_size = fs::metadata(&actual_video_path)?.len();
+                    println!("      Video Written: {} bytes", video_size);
+                }
+
+                // 4. Print a message if the test is run without the feature
+                #[cfg(not(feature = "vod"))]
+                {
+                    println!("      [Skipped] Video extraction (downloader feature disabled)");
+                }
             }
             Err(e) => {
                 println!("   Metadata resolution failed: {:?}", e);

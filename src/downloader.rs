@@ -1,3 +1,5 @@
+#![cfg(feature = "vod")]
+
 use futures::stream::{self, StreamExt};
 use std::path::PathBuf;
 use std::process::Stdio;
