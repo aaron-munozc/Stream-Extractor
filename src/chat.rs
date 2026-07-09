@@ -135,6 +135,7 @@ pub(crate) async fn download_chat_internal(
         .output_dir
         .clone()
         .or_else(dirs::download_dir)
+        .or_else(dirs::document_dir)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
     let base_name = options.output_name.clone().unwrap_or_else(|| {
@@ -439,6 +440,8 @@ pub(crate) async fn download_chat_internal(
         let mut next_start = stream_start + ChronoDuration::milliseconds(aligned_start);
         let mut empty_cycles = 0;
 
+        let kick_opts = options.kick_options();
+
         loop {
             if let Some(ref rx_cancel) = options.cancel_rx
                 && *rx_cancel.borrow()
@@ -448,7 +451,7 @@ pub(crate) async fn download_chat_internal(
 
             let mut starts = Vec::new();
             let mut candidate = next_start;
-            for _ in 0..options.kick_concurrency() {
+            for _ in 0..kick_opts.concurrency {
                 if effective_end_ms > 0
                     && (candidate - stream_start).num_milliseconds() as u64 >= effective_end_ms
                 {
@@ -504,7 +507,7 @@ pub(crate) async fn download_chat_internal(
                 empty_cycles = 0;
             } else {
                 empty_cycles += 1;
-                if effective_end_ms == 0 && empty_cycles >= options.kick_empty_cycle_threshold() {
+                if effective_end_ms == 0 && empty_cycles >= kick_opts.empty_cycle_threshold {
                     break;
                 }
             }

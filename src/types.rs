@@ -621,32 +621,80 @@ pub(crate) struct TwitchPlaybackAccessToken {
 // Platform-specific chat options
 // ---------------------------------------------------------------------------
 
+/// Options that only affect Kick chat downloads.
+#[derive(Debug, Clone, Copy)]
+pub struct KickOptions {
+    /// Number of concurrent chat-history requests per batch window.
+    ///
+    /// Higher values speed up retrieval at the cost of more open connections.
+    pub concurrency: usize,
+    /// Consecutive empty response batches before treating the chat as ended.
+    ///
+    /// Only relevant when `end_ms` is unset (open-ended download).
+    pub empty_cycle_threshold: usize,
+}
+
+impl Default for KickOptions {
+    fn default() -> Self {
+        Self {
+            concurrency: 4,
+            empty_cycle_threshold: 8,
+        }
+    }
+}
+
+impl KickOptions {
+    #[must_use]
+    pub fn with_concurrency(mut self, concurrency: usize) -> Self {
+        self.concurrency = concurrency;
+        self
+    }
+
+    #[must_use]
+    pub fn with_empty_cycle_threshold(mut self, threshold: usize) -> Self {
+        self.empty_cycle_threshold = threshold;
+        self
+    }
+}
+
+/// Options that only affect Twitch chat downloads.
+///
+/// (Currently empty, reserved for future implementation)
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TwitchOptions {
+    // TODO: Add Twitch-specific knobs here
+}
+
+impl TwitchOptions {
+    // Add builder methods here as fields are added
+}
+
 /// Per-platform settings for chat downloading.
 ///
 /// Pass this to [`ChatDownloadOptions::with_platform_options`] to tune behaviour for
 /// a specific platform without exposing those knobs to callers who don't care.
 #[derive(Debug, Clone)]
 pub enum PlatformChatOptions {
-    /// Options that only affect Kick chat downloads.
-    Kick {
-        /// Number of concurrent chat-history requests per batch window.
-        ///
-        /// Higher values speed up retrieval at the cost of more open connections.
-        /// Default: `10`.
-        concurrency: usize,
-        /// Consecutive empty response batches before treating the chat as ended.
-        ///
-        /// Only relevant when `end_ms` is unset (open-ended download).
-        /// Default: `6`.
-        empty_cycle_threshold: usize,
-    },
+    Kick(KickOptions),
+    Twitch(TwitchOptions),
+}
+
+impl From<KickOptions> for PlatformChatOptions {
+    fn from(opts: KickOptions) -> Self {
+        Self::Kick(opts)
+    }
+}
+
+impl From<TwitchOptions> for PlatformChatOptions {
+    fn from(opts: TwitchOptions) -> Self {
+        Self::Twitch(opts)
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Chat options
 // ---------------------------------------------------------------------------
 
-#[derive(Clone)]
 pub struct ChatDownloadOptions {
     pub output_dir: Option<PathBuf>,
     pub output_name: Option<String>,
@@ -702,17 +750,17 @@ impl ChatDownloadOptions {
     /// Override platform-specific options.
     ///
     /// ```rust
-    /// use stream_extractor::{ChatDownloadOptions, PlatformChatOptions};
+    /// use stream_extractor::{ChatDownloadOptions, KickOptions};
     ///
     /// let opts = ChatDownloadOptions::default()
-    ///     .with_platform_options(PlatformChatOptions::Kick {
-    ///         concurrency: 20,
-    ///         empty_cycle_threshold: 10,
-    ///     });
+    ///     // Thanks to the `Into` trait, we can pass `KickOptions` directly
+    ///     .with_platform_options(
+    ///         KickOptions::default().with_concurrency(20)
+    ///     );
     /// ```
     #[must_use]
-    pub fn with_platform_options(mut self, opts: PlatformChatOptions) -> Self {
-        self.platform_options = Some(opts);
+    pub fn with_platform_options<P: Into<PlatformChatOptions>>(mut self, opts: P) -> Self {
+        self.platform_options = Some(opts.into());
         self
     }
 
@@ -730,23 +778,46 @@ impl ChatDownloadOptions {
 
     // -- internal accessors --------------------------------------------------
 
-    /// Number of concurrent Kick chat-history requests. Falls back to `10`.
-    pub(crate) fn kick_concurrency(&self) -> usize {
-        match &self.platform_options {
-            Some(PlatformChatOptions::Kick { concurrency, .. }) => *concurrency,
-            None => 10,
+    /// Retrieves Kick-specific configuration, returning defaults if not explicitly set.
+    pub(crate) fn kick_options(&self) -> KickOptions {
+        if let Some(PlatformChatOptions::Kick(opts)) = &self.platform_options {
+            *opts
+        } else {
+            KickOptions::default()
         }
     }
 
-    /// Empty-batch threshold for Kick. Falls back to `6`.
-    pub(crate) fn kick_empty_cycle_threshold(&self) -> usize {
-        match &self.platform_options {
-            Some(PlatformChatOptions::Kick { empty_cycle_threshold, .. }) => *empty_cycle_threshold,
-            None => 6,
+    /// Retrieves Twitch-specific configuration, returning defaults if not explicitly set.
+    #[allow(dead_code)]
+    pub(crate) fn twitch_options(&self) -> TwitchOptions {
+        if let Some(PlatformChatOptions::Twitch(opts)) = &self.platform_options {
+            *opts
+        } else {
+            TwitchOptions::default()
         }
     }
 }
 
+
+
+impl Default for ChatDownloadOptions {
+    fn default() -> Self {
+        Self {
+            output_dir: None,
+            output_name: None,
+            start_ms: None,
+            end_ms: None,
+            buffer_ms: None,
+            max_retries: 8,
+            platform_options: None,
+            progress_hook: None,
+            cancel_rx: None,
+        }
+    }
+}
+
+
+// Ensure your manual Debug impl still exists, omitting the raw fields as needed
 impl fmt::Debug for ChatDownloadOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ChatOptions")
@@ -774,22 +845,6 @@ impl fmt::Debug for ChatDownloadOptions {
              },
          )
          .finish()
-    }
-}
-
-impl Default for ChatDownloadOptions {
-    fn default() -> Self {
-        Self {
-            output_dir: None,
-            output_name: None,
-            start_ms: None,
-            end_ms: None,
-            buffer_ms: None,
-            max_retries: 8,
-            platform_options: None,
-            progress_hook: None,
-            cancel_rx: None,
-        }
     }
 }
 
