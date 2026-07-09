@@ -1846,7 +1846,6 @@ name = "stream_extractor"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "cookie",
  "dirs",
  "futures",
  "log",

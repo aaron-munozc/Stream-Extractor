@@ -336,7 +336,7 @@ pub(crate) async fn download_vod_internal(
             message: "Initializing direct MP4 download...".into(),
         });
 
-        let mut resp = client.inner.get(m3u8_url).send().await?;
+        let resp = client.inner.get(m3u8_url).send().await?;
         if !resp.status().is_success() {
             return Err(Error::Network(resp.error_for_status().unwrap_err()));
         }
@@ -477,7 +477,7 @@ pub(crate) async fn download_vod_internal(
 
     if let Err(e) = run_ffmpeg(&arg_refs, options.cancel_rx.clone()).await {
         log::error!("FFmpeg failed. Segments left in: {}", tmp_path.display());
-        let _ = tmp.into_path(); // keep dir on disk
+        let _ = tmp.keep(); // keep dir on disk
         report(ProgressPayload::Error {
             message: e.to_string(),
         });

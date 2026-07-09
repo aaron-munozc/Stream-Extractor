@@ -588,7 +588,6 @@ pub(crate) struct TwitchClipQueryData {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TwitchClipDetails {
-    pub id: String,
     pub title: Option<String>,
     pub duration_seconds: Option<i64>,
     pub view_count: Option<i64>,
@@ -603,8 +602,6 @@ pub(crate) struct TwitchClipDetails {
 #[derive(Debug, Deserialize)]
 pub(crate) struct TwitchBroadcaster {
     pub login: Option<String>,
-    #[serde(rename = "displayName")]
-    pub display_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
