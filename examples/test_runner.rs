@@ -2,10 +2,9 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
-
 // 1. We removed VodDownloadOptions from the main import block
 use stream_extractor::{
-    fetch_stream, ChatDownloadOptions, ProgressCallback, ProgressPayload, StreamClient,
+    fetch_stream, ChatDownloadOptions, ProgressCallback, ProgressPayload, StreamClient
 };
 
 // 2. We import it only if the feature is active

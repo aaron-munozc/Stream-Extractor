@@ -22,7 +22,7 @@ pub use types::{
 pub use types::{
     Badge, ChatDownloadOptions, Identity, MessageSaved, Platform, ProgressCallback,
     ProgressPayload, Sender, StreamMetadata,
-    StreamStatus,
+    StreamStatus, PlatformChatOptions, KickOptions,
 };
 
 #[cfg(all(feature = "reqwest-backend", feature = "wreq-backend"))]
