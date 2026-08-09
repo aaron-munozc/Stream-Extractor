@@ -1,9 +1,17 @@
-use crate::http::{StatusCode, header::{ACCEPT, REFERER}};
+use crate::http::{
+    header::{ACCEPT, REFERER},
+    StatusCode,
+};
 use url::Url;
 
 use crate::client::StreamClient;
 use crate::error::Result;
-use crate::types::{parse_datetime, ChannelField, KickChannelResponse, KickClipResponse, KickVideoResponse, Platform, StreamMetadata, StreamStatus};
+use crate::types::{
+    parse_datetime, ChannelField, ClipInfo, KickChannelResponse, KickClipResponse,
+    KickVideoResponse, LiveInfo, Platform, VodInfo,
+};
+
+// ----------------- URL Parser -----------------
 
 pub(crate) enum KickStream {
     Vod(String),
@@ -28,22 +36,25 @@ pub(crate) fn get_kick_stream_info(url: &str) -> KickStream {
         .unwrap_or_default();
 
     match segments.as_slice() {
-        // Matches: kick.com/<username>/video/<uuid> or kick.com/<username>/videos/<uuid>
+        // kick.com/<username>/video/<uuid> or kick.com/<username>/videos/<uuid>
         [_, "video" | "videos", uuid, ..] => KickStream::Vod(uuid.to_string()),
 
-        // Matches: kick.com/<username>/clips/<clip_id>
+        // kick.com/<username>/clips/<clip_id>
         [_, "clips", clip_id, ..] => KickStream::Clip(clip_id.to_string()),
 
-        // Matches: kick.com/<username> (Live channel feed)
+        // kick.com/<username>
         [slug] => KickStream::Live(slug.to_string()),
 
         _ => KickStream::Invalid,
     }
 }
+
+// ----------------- Public fetch functions -----------------
+
 pub(crate) async fn fetch_kick_video_api(
     client: &StreamClient,
     uuid: &str,
-) -> Result<Option<StreamMetadata>> {
+) -> Result<Option<VodInfo>> {
     let api_url = format!("https://kick.com/api/v1/video/{}", uuid);
 
     let resp = client
@@ -59,13 +70,11 @@ pub(crate) async fn fetch_kick_video_api(
     }
 
     let resp = resp.error_for_status()?;
-
     let parsed: KickVideoResponse = resp.json().await?;
 
-    let mut meta = StreamMetadata {
+    let mut info = VodInfo {
+        vod_id: uuid.to_string(),
         platform: Platform::Kick,
-        stream_status: Some(StreamStatus::Vod),
-        vod_uuid: Some(uuid.to_string()),
         views: parsed.views,
         source: parsed.source.clone(),
         ..Default::default()
@@ -74,43 +83,41 @@ pub(crate) async fn fetch_kick_video_api(
     let mut channel_live_fallback_url: Option<String> = None;
 
     if let Some(ls) = parsed.livestream {
-        meta.title = ls.session_title;
-        meta.start_time = parse_datetime(ls.start_time);
-        meta.duration = ls.duration;
-        meta.thumbnail_url = ls.thumbnail;
+        info.title = ls.session_title;
+        info.start_time = parse_datetime(ls.start_time);
+        info.duration = ls.duration;
+        info.thumbnail_url = ls.thumbnail;
 
         if let Some(ch_field) = ls.channel {
             match ch_field {
                 ChannelField::Obj(ch) => {
-                    meta.username = ch.user.and_then(|u| u.username).or(ch.slug);
-                    meta.followers = ch.followers_count;
-                    meta.chat_id = ch.chatroom.and_then(|c| c.id).or(ch.id);
-
+                    info.username = ch.user.and_then(|u| u.username).or(ch.slug);
+                    info.chat_id = ch.chatroom.and_then(|c| c.id).or(ch.id);
                     channel_live_fallback_url = ch.playback_url;
                 }
                 ChannelField::Id(id) => {
-                    meta.chat_id = Some(id);
+                    info.chat_id = Some(id);
                 }
             }
         }
     }
 
-    meta.playback_url = parsed
+    info.playback_url = parsed
         .playback_url
         .or(parsed.source)
         .or(channel_live_fallback_url);
 
-    if meta.source.is_none() {
-        meta.source = meta.playback_url.clone();
+    if info.source.is_none() {
+        info.source = info.playback_url.clone();
     }
 
-    Ok(Some(meta))
+    Ok(Some(info))
 }
 
 pub(crate) async fn fetch_kick_clip_api(
     client: &StreamClient,
     clip_id: &str,
-) -> Result<Option<StreamMetadata>> {
+) -> Result<Option<ClipInfo>> {
     let api_url = format!("https://kick.com/api/v2/clips/{}", clip_id);
 
     let resp = client
@@ -126,7 +133,6 @@ pub(crate) async fn fetch_kick_clip_api(
     }
 
     let resp = resp.error_for_status()?;
-
     let parsed: KickClipResponse = resp.json().await?;
 
     let clip = match parsed.clip {
@@ -134,29 +140,31 @@ pub(crate) async fn fetch_kick_clip_api(
         None => return Ok(None),
     };
 
-    let meta = StreamMetadata {
-        platform: Platform::Kick,
-        stream_status: Some(StreamStatus::Clip),
-        vod_uuid: Some(clip_id.to_string()),
-        title: clip.title,
-        thumbnail_url: clip.thumbnail_url,
-        views: clip.views,
-        start_time: parse_datetime(clip.created_at),
-        duration: clip.duration.map(|sec| sec as i64),
-        source: clip.video_url.clone(),
-        playback_url: clip.video_url,
-        username: clip.channel.as_ref().and_then(|c| c.username.clone()),
-        chat_id: clip.channel.and_then(|c| c.id),
-        ..Default::default()
-    };
+    let username = clip.channel.as_ref().and_then(|c| c.username.clone());
+    let chat_id = clip
+        .channel
+        .as_ref()
+        .and_then(|c| c.id)
+        .or(clip.channel_id);
 
-    Ok(Some(meta))
+    Ok(Some(ClipInfo {
+        clip_id: clip_id.to_string(),
+        platform: Platform::Kick,
+        title: clip.title,
+        username,
+        thumbnail_url: clip.thumbnail_url,
+        start_time: parse_datetime(clip.started_at.or(clip.created_at)),
+        duration: clip.duration.map(|sec| sec as i64),
+        views: clip.views,
+        chat_id,
+        playback_url: clip.video_url,
+    }))
 }
 
 pub(crate) async fn fetch_kick_channel_api(
     client: &StreamClient,
     slug: &str,
-) -> Result<Option<StreamMetadata>> {
+) -> Result<Option<LiveInfo>> {
     let api_url = format!("https://kick.com/api/v1/channels/{}", slug);
 
     let resp = client
@@ -171,38 +179,30 @@ pub(crate) async fn fetch_kick_channel_api(
     }
 
     let resp = resp.error_for_status()?;
-
     let parsed: KickChannelResponse = resp.json().await?;
 
-    let (status, title, start, viewers, thumb) = if let Some(ls) = parsed.livestream {
-        (
-            StreamStatus::Live,
-            ls.session_title,
-            ls.start_time,
-            ls.viewer_count,
-            ls.thumbnail,
-        )
+    let is_live = parsed.livestream.is_some();
+
+    let (title, start_time, viewer_count, thumbnail_url) = if let Some(ls) = parsed.livestream {
+        (ls.session_title, ls.start_time, ls.viewer_count, ls.thumbnail)
     } else {
-        (StreamStatus::Offline, None, None, None, None)
+        (None, None, None, None)
     };
 
-    let meta = StreamMetadata {
+    Ok(Some(LiveInfo {
         platform: Platform::Kick,
         username: parsed
             .user
             .as_ref()
             .and_then(|u| u.username.clone())
             .or_else(|| Some(slug.to_string())),
+        title,
+        thumbnail_url,
+        start_time: parse_datetime(start_time),
+        viewer_count,
         followers: parsed.followers_count,
         playback_url: parsed.playback_url,
         chat_id: parsed.chatroom.and_then(|c| c.id).or(parsed.id),
-        stream_status: Some(status),
-        title,
-        start_time: parse_datetime(start),
-        viewer_count: viewers,
-        thumbnail_url: thumb,
-        ..Default::default()
-    };
-
-    Ok(Some(meta))
+        is_live,
+    }))
 }

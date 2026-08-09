@@ -14,12 +14,16 @@ use url::Url;
 use crate::client::StreamClient;
 use crate::error::{Error, Result};
 use crate::types::{
-    VodDownloadOptions, ProgressPayload, QualityPreference, StreamMetadata, StreamQuality,
-    StreamResolution,
+    ClipInfo, ProgressPayload, QualityPreference, StreamQuality, StreamResolution, VodInfo,
+    VodDownloadOptions,
 };
 
 const RETRIES: usize = 3;
 const MAX_CONCURRENCY: usize = 16;
+
+// ---------------------------------------------------------------------------
+// FFmpeg runner
+// ---------------------------------------------------------------------------
 
 pub(crate) async fn run_ffmpeg(
     args: &[&str],
@@ -48,7 +52,6 @@ pub(crate) async fn run_ffmpeg(
                 res.map_err(|e| Error::Ffmpeg(format!("Failed to execute ffmpeg: {}", e)))?
             }
             _ = async {
-                // Keep checking the channel until it flips to true
                 while rx.changed().await.is_ok() {
                     if *rx.borrow() { break; }
                 }
@@ -70,11 +73,14 @@ pub(crate) async fn run_ffmpeg(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Quality enumeration
+// ---------------------------------------------------------------------------
+
 pub(crate) async fn get_qualities_internal(
     client: &StreamClient,
     m3u8_url: &str,
 ) -> Result<Vec<StreamQuality>> {
-    // [FIX] Early return for direct MP4s (Twitch Clips) to prevent feeding raw video bytes to the M3U8 parser
     if m3u8_url.contains(".mp4") {
         return Ok(vec![StreamQuality {
             index: 0,
@@ -128,6 +134,10 @@ pub(crate) async fn get_qualities_internal(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Internal download machinery
+// ---------------------------------------------------------------------------
+
 async fn resolve_media_playlist(
     client: &StreamClient,
     m3u8_url: &str,
@@ -150,7 +160,9 @@ async fn resolve_media_playlist(
                 QualityPreference::Index(idx) => master.variants.get(idx),
             }
                 .or_else(|| master.variants.first())
-                .ok_or(Error::PlaylistParse("No variants found in master playlist".into()))?;
+                .ok_or(Error::PlaylistParse(
+                    "No variants found in master playlist".into(),
+                ))?;
 
             let mut joined = base.join(&variant.uri)?;
             if joined.query().is_none() && base.query().is_some() {
@@ -178,7 +190,6 @@ async fn download_segment(
     let task = async {
         let mut attempts = 0;
         loop {
-            // .as_str() guarantees IntoUri trait bounds are met for wreq
             match client.get(url.as_str()).send().await {
                 Ok(resp) => {
                     let mut file = async_fs::File::create(&path).await?;
@@ -241,12 +252,14 @@ async fn download_segments(
     options: &VodDownloadOptions,
     tmp_path: &std::path::Path,
 ) -> Result<Vec<(usize, PathBuf)>> {
-    let downloaded_count = Arc::new(AtomicU64::new(0));
     let total_count = selected.len() as f64;
+    let downloaded_count = Arc::new(AtomicU64::new(0));
 
-    let mut paths_result = stream::iter(selected)
+    let paths_result: Vec<_> = stream::iter(selected.into_iter())
         .map(|(idx, uri)| {
             let inner_client = client.inner.clone();
+            let downloaded_count = downloaded_count.clone();
+
             let mut url = playlist_url.join(&uri).unwrap();
             if url.query().is_none() && playlist_url.query().is_some() {
                 url.set_query(playlist_url.query());
@@ -264,7 +277,7 @@ async fn download_segments(
                 if let Some(ref hook) = report_hook {
                     hook(ProgressPayload::Downloading {
                         percent: ((completed as f64 / total_count) * 100.0) as u8,
-                        message: format!("Downloading {}/{}", completed, total_count),
+                        message: format!("Downloading {}/{}", completed, total_count as u64),
                     });
                 }
                 Ok::<(usize, PathBuf), Error>((idx, path))
@@ -276,45 +289,36 @@ async fn download_segments(
         .into_iter()
         .collect::<Result<Vec<_>>>()?;
 
-    paths_result.sort_by_key(|(idx, _)| *idx);
-    Ok(paths_result)
+    let mut sorted = paths_result;
+    sorted.sort_by_key(|(idx, _)| *idx);
+    Ok(sorted)
 }
 
-pub(crate) async fn download_vod_internal(
+/// Shared segment-download + ffmpeg merge logic used by both VOD and clip
+/// download entry points.
+async fn download_m3u8(
     client: &StreamClient,
-    meta: &StreamMetadata,
-    options: VodDownloadOptions,
+    m3u8_url: &str,
+    duration_secs: Option<i64>,
+    platform_str: &str,
+    username: Option<&str>,
+    id_marker: &str,
+    options: &VodDownloadOptions,
+    target_dir: &PathBuf,
 ) -> Result<PathBuf> {
-    let m3u8_url = meta
-        .playback_url
-        .as_ref()
-        .or(meta.source.as_ref())
-        .ok_or(Error::NotFound)?;
-
     let report = |payload: ProgressPayload| {
         if let Some(ref hook) = options.progress_hook {
             hook(payload);
         }
     };
 
-    let target_dir = options
-        .output_dir
-        .clone()
-        .or_else(dirs::download_dir)
-        .or_else(dirs::video_dir)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-
+    let ext = options.format.extension();
     let base_name = options.output_name.clone().unwrap_or_else(|| {
-        let safe_username = meta
-            .username
-            .as_deref()
+        let safe_username = username
             .unwrap_or("streamer")
             .replace(|c: char| !c.is_alphanumeric(), "_");
-        let id_marker = meta.vod_uuid.as_deref().unwrap_or("media");
-        format!("{}_{}_{}", meta.platform, safe_username, id_marker)
+        format!("{}_{}_{}", platform_str, safe_username, id_marker)
     });
-
-    let ext = options.format.extension();
 
     let target_name = if base_name.ends_with(&format!(".{}", ext)) {
         base_name
@@ -323,13 +327,12 @@ pub(crate) async fn download_vod_internal(
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or(&base_name);
-
         format!("{}.{}", clean_base, ext)
     };
 
     let final_output_path = target_dir.join(target_name);
 
-
+    // Fast path: direct MP4 download (Twitch clips, Kick clips).
     if m3u8_url.contains(".mp4") {
         report(ProgressPayload::Downloading {
             percent: 0,
@@ -345,7 +348,6 @@ pub(crate) async fn download_vod_internal(
         let mut file = async_fs::File::create(&final_output_path).await?;
         let mut downloaded: u64 = 0;
 
-        // Uses bytes_stream() to remain compatible with both reqwest and wreq
         let mut byte_stream = resp.bytes_stream();
         while let Some(chunk_res) = byte_stream.next().await {
             let chunk = chunk_res?;
@@ -361,20 +363,18 @@ pub(crate) async fn download_vod_internal(
         }
         file.flush().await?;
         report(ProgressPayload::Done);
-
         return Ok(final_output_path);
     }
 
+    // M3U8 / HLS path.
     report(ProgressPayload::Downloading {
         percent: 0,
         message: "Initializing M3U8 target...".into(),
     });
 
     let playlist_url = resolve_media_playlist(client, m3u8_url, options.quality).await?;
-
     log::info!("Fetching Media Playlist: {}", playlist_url);
 
-    // .as_str() guarantees IntoUri trait bounds are met for wreq
     let media_bytes = client
         .inner
         .get(playlist_url.as_str())
@@ -400,12 +400,12 @@ pub(crate) async fn download_vod_internal(
         }
     };
 
-    let buffer = options.buffer_ms.unwrap_or(0) as f64;
-    let start_target = (options.start_ms.unwrap_or(0) as f64 - buffer).max(0.0);
+    let buffer_f = options.buffer_ms.unwrap_or(0) as f64;
+    let start_target = (options.start_ms.unwrap_or(0) as f64 - buffer_f).max(0.0);
     let end_target = options
         .end_ms
-        .map(|e| e as f64 + buffer)
-        .or_else(|| meta.duration.map(|d| start_target + (d as f64 * 1000.0)));
+        .map(|e| e as f64 + buffer_f)
+        .or_else(|| duration_secs.map(|d| start_target + (d as f64 * 1000.0)));
 
     let mut selected = Vec::new();
     let mut current_ms = 0.0;
@@ -431,23 +431,30 @@ pub(crate) async fn download_vod_internal(
 
     let tmp = tempfile::Builder::new()
         .prefix("vod_")
-        .tempdir_in(&target_dir)?;
+        .tempdir_in(target_dir)?;
     let tmp_path = tmp.path().to_path_buf();
 
-    let paths_result = download_segments(client, &playlist_url, selected, &options, &tmp_path).await?;
+    let paths_result =
+        download_segments(client, &playlist_url, selected, options, &tmp_path).await?;
 
     let list_path = tmp_path.join("list.txt");
     async_fs::write(
         &list_path,
         paths_result
             .iter()
-            .map(|(_, p)| format!("file '{}'", p.file_name().unwrap().to_str().unwrap()))
+            .map(|(_, p)| {
+                format!(
+                    "file '{}'",
+                    p.file_name().unwrap().to_str().unwrap()
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n"),
     )
         .await?;
 
     report(ProgressPayload::Merging);
+
     let mut args = vec![
         "-y".into(),
         "-f".into(),
@@ -477,7 +484,7 @@ pub(crate) async fn download_vod_internal(
 
     if let Err(e) = run_ffmpeg(&arg_refs, options.cancel_rx.clone()).await {
         log::error!("FFmpeg failed. Segments left in: {}", tmp_path.display());
-        let _ = tmp.keep(); // keep dir on disk
+        let _ = tmp.keep();
         report(ProgressPayload::Error {
             message: e.to_string(),
         });
@@ -485,6 +492,103 @@ pub(crate) async fn download_vod_internal(
     }
 
     report(ProgressPayload::Done);
-
     Ok(final_output_path)
+}
+
+// ---------------------------------------------------------------------------
+// Public entry points
+// ---------------------------------------------------------------------------
+
+/// Download a VOD's video track.
+pub(crate) async fn download_vod_video(
+    client: &StreamClient,
+    vod: &VodInfo,
+    options: VodDownloadOptions,
+) -> Result<PathBuf> {
+    log::info!(
+        "Starting VOD video download on platform: {}",
+        vod.platform
+    );
+
+    let m3u8_url = vod
+        .playback_url
+        .as_deref()
+        .or(vod.source.as_deref())
+        .ok_or(Error::NotFound)?;
+
+    let target_dir = options
+        .output_dir
+        .clone()
+        .or_else(dirs::download_dir)
+        .or_else(dirs::video_dir)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+    download_m3u8(
+        client,
+        m3u8_url,
+        vod.duration,
+        &vod.platform.to_string(),
+        vod.username.as_deref(),
+        &vod.vod_id,
+        &options,
+        &target_dir,
+    )
+        .await
+}
+
+/// Download a clip's video track.
+///
+/// Clips are usually a single MP4 URL (Twitch) or a short M3U8 (Kick).
+pub(crate) async fn download_clip_video(
+    client: &StreamClient,
+    clip: &ClipInfo,
+    options: VodDownloadOptions,
+) -> Result<PathBuf> {
+    log::info!(
+        "Starting clip video download on platform: {}",
+        clip.platform
+    );
+
+    let url = clip.playback_url.as_deref().ok_or(Error::NotFound)?;
+
+    let target_dir = options
+        .output_dir
+        .clone()
+        .or_else(dirs::download_dir)
+        .or_else(dirs::video_dir)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+    download_m3u8(
+        client,
+        url,
+        clip.duration,
+        &clip.platform.to_string(),
+        clip.username.as_deref(),
+        &clip.clip_id,
+        &options,
+        &target_dir,
+    )
+        .await
+}
+
+/// Get available quality variants for a VOD.
+pub(crate) async fn get_vod_qualities(
+    client: &StreamClient,
+    vod: &VodInfo,
+) -> Result<Vec<StreamQuality>> {
+    let url = vod
+        .playback_url
+        .as_deref()
+        .or(vod.source.as_deref())
+        .ok_or(Error::NotFound)?;
+    get_qualities_internal(client, url).await
+}
+
+/// Get available quality variants for a clip.
+pub(crate) async fn get_clip_qualities(
+    client: &StreamClient,
+    clip: &ClipInfo,
+) -> Result<Vec<StreamQuality>> {
+    let url = clip.playback_url.as_deref().ok_or(Error::NotFound)?;
+    get_qualities_internal(client, url).await
 }

@@ -9,19 +9,26 @@ use std::sync::Arc;
 // Utility
 // ---------------------------------------------------------------------------
 
-/// Parses an optional RFC 3339 datetime string into a `DateTime<Utc>`.
-/// Returns `None` if the input is `None` or if parsing fails.
+/// Parses an optional RFC 3339 / space-separated datetime string into a
+/// `DateTime<Utc>`. Returns `None` if the input is `None` or parsing fails.
 pub(crate) fn parse_datetime(s: Option<String>) -> Option<DateTime<Utc>> {
-    s.and_then(|s| {
-        DateTime::parse_from_rfc3339(&s)
+    s.and_then(|raw| {
+        // Try RFC 3339 first, then the "YYYY-MM-DD HH:MM:SS" format Kick uses.
+        DateTime::parse_from_rfc3339(&raw)
             .ok()
             .map(|dt| dt.with_timezone(&Utc))
+            .or_else(|| {
+                chrono::NaiveDateTime::parse_from_str(&raw, "%Y-%m-%d %H:%M:%S")
+                    .ok()
+                    .map(|ndt| ndt.and_utc())
+            })
     })
 }
 
 // ---------------------------------------------------------------------------
 // Download-specific types
 // ---------------------------------------------------------------------------
+
 #[cfg(feature = "vod")]
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +36,7 @@ pub struct StreamResolution {
     pub width: u64,
     pub height: u64,
 }
+
 #[cfg(feature = "vod")]
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +70,7 @@ pub enum QualityPreference {
     Height(u64),
     Index(usize),
 }
+
 #[cfg(feature = "vod")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -72,6 +81,7 @@ pub enum VideoFormat {
     Mov,
     Ts,
 }
+
 #[cfg(feature = "vod")]
 impl VideoFormat {
     pub fn extension(&self) -> &'static str {
@@ -83,6 +93,7 @@ impl VideoFormat {
         }
     }
 }
+
 #[cfg(feature = "vod")]
 #[derive(Clone)]
 pub struct VodDownloadOptions {
@@ -97,6 +108,7 @@ pub struct VodDownloadOptions {
     pub progress_hook: Option<ProgressCallback>,
     pub cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
 }
+
 #[cfg(feature = "vod")]
 impl VodDownloadOptions {
     #[must_use]
@@ -159,10 +171,11 @@ impl VodDownloadOptions {
         self
     }
 }
+
 #[cfg(feature = "vod")]
 impl std::fmt::Debug for VodDownloadOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DownloadOptions")
+        f.debug_struct("VodDownloadOptions")
          .field("output_dir", &self.output_dir)
          .field("output_name", &self.output_name)
          .field("threads", &self.threads)
@@ -190,6 +203,7 @@ impl std::fmt::Debug for VodDownloadOptions {
          .finish()
     }
 }
+
 #[cfg(feature = "vod")]
 impl Default for VodDownloadOptions {
     fn default() -> Self {
@@ -209,7 +223,7 @@ impl Default for VodDownloadOptions {
 }
 
 // ---------------------------------------------------------------------------
-// Platform & metadata types
+// Platform
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -229,51 +243,109 @@ impl fmt::Display for Platform {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum StreamStatus {
-    Live,
-    Clip,
-    Vod,
-    Offline,
-}
+// ---------------------------------------------------------------------------
+// Focused stream-kind structs
+// ---------------------------------------------------------------------------
 
+/// Metadata for a recorded VOD (Twitch VOD or Kick VOD).
+///
+/// Contains everything needed to display info to the user **and** to drive
+/// both the video downloader and the chat downloader.
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct StreamMetadata {
+pub struct VodInfo {
+    /// Unique VOD identifier (numeric string on Twitch, UUID on Kick).
+    pub vod_id: String,
+    pub platform: Platform,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub chat_id: Option<i64>,
-    /// Parsed VOD/stream start time. `None` for streams where this is unknown.
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumbnail_url: Option<String>,
+    /// VOD start wall-clock time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_time: Option<DateTime<Utc>>,
-    /// Stream or VOD duration in **seconds**. `None` for live streams.
+    /// Duration in **seconds**.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub views: Option<i64>,
+    /// Kick chatroom ID — required for chat downloading on Kick.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_id: Option<i64>,
+    /// The highest-quality media playlist URL (chosen by the fetcher).
+    /// This is what the downloader passes to ffmpeg / segment worker.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub playback_url: Option<String>,
+    /// The raw master playlist / source URL before quality selection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+/// Metadata for a clip (Twitch clip or Kick clip).
+///
+/// Clips are short, finite recordings — they always have a direct MP4 / M3U8
+/// URL and a known duration, but no live viewer count.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipInfo {
+    /// Platform-specific clip identifier (slug on Twitch, ULID on Kick).
+    pub clip_id: String,
+    pub platform: Platform,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumbnail_url: Option<String>,
+    /// Wall-clock time when the clip was created / the underlying stream
+    /// moment occurred.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_time: Option<DateTime<Utc>>,
+    /// Clip duration in **seconds**.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub views: Option<i64>,
+    /// Kick chatroom ID — used when downloading clip chat (chat = a range of
+    /// the parent VOD chat).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_id: Option<i64>,
+    /// Direct playback URL (MP4 for Twitch clips; M3U8 for Kick clips).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub playback_url: Option<String>,
+}
+
+/// Metadata for a currently live or recently-offline channel.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveInfo {
+    pub platform: Platform,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thumbnail_url: Option<String>,
+    /// When the current stream session started.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_time: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub viewer_count: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub views: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub username: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub followers: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
+    /// Live HLS playlist URL.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub playback_url: Option<String>,
+    /// Kick chatroom ID.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub vod_uuid: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stream_status: Option<StreamStatus>,
-    pub platform: Platform,
+    pub chat_id: Option<i64>,
+    pub is_live: bool,
 }
 
 // ---------------------------------------------------------------------------
-// Kick internal types
+// Kick internal API types
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -330,7 +402,9 @@ fn parse_srcset(s: &str) -> Option<String> {
      .map(|(_, url)| url)
 }
 
-fn deserialize_kick_response_thumbnail<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+fn deserialize_kick_response_thumbnail<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -430,8 +504,10 @@ pub(crate) struct KickClipData {
     pub title: Option<String>,
     pub thumbnail_url: Option<String>,
     pub views: Option<i64>,
+    pub channel_id: Option<i64>,
     /// Duration in **seconds** as returned by the Kick API.
     pub duration: Option<f64>,
+    pub started_at: Option<String>,
     #[serde(rename = "created_at")]
     pub created_at: Option<String>,
     pub video_url: Option<String>,
@@ -616,7 +692,6 @@ pub(crate) struct TwitchPlaybackAccessToken {
     pub value: Option<String>,
 }
 
-
 // ---------------------------------------------------------------------------
 // Platform-specific chat options
 // ---------------------------------------------------------------------------
@@ -625,12 +700,8 @@ pub(crate) struct TwitchPlaybackAccessToken {
 #[derive(Debug, Clone, Copy)]
 pub struct KickOptions {
     /// Number of concurrent chat-history requests per batch window.
-    ///
-    /// Higher values speed up retrieval at the cost of more open connections.
     pub concurrency: usize,
     /// Consecutive empty response batches before treating the chat as ended.
-    ///
-    /// Only relevant when `end_ms` is unset (open-ended download).
     pub empty_cycle_threshold: usize,
 }
 
@@ -658,21 +729,12 @@ impl KickOptions {
 }
 
 /// Options that only affect Twitch chat downloads.
-///
-/// (Currently empty, reserved for future implementation)
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TwitchOptions {
-    // TODO: Add Twitch-specific knobs here
-}
-
-impl TwitchOptions {
-    // Add builder methods here as fields are added
+    // Reserved for future Twitch-specific knobs.
 }
 
 /// Per-platform settings for chat downloading.
-///
-/// Pass this to [`ChatDownloadOptions::with_platform_options`] to tune behaviour for
-/// a specific platform without exposing those knobs to callers who don't care.
 #[derive(Debug, Clone)]
 pub enum PlatformChatOptions {
     Kick(KickOptions),
@@ -692,7 +754,7 @@ impl From<TwitchOptions> for PlatformChatOptions {
 }
 
 // ---------------------------------------------------------------------------
-// Chat options
+// Chat download options
 // ---------------------------------------------------------------------------
 
 pub struct ChatDownloadOptions {
@@ -709,8 +771,6 @@ pub struct ChatDownloadOptions {
 }
 
 impl ChatDownloadOptions {
-    // -- builder methods -----------------------------------------------------
-
     #[must_use]
     pub fn with_output_dir<P: Into<PathBuf>>(mut self, dir: P) -> Self {
         self.output_dir = Some(dir.into());
@@ -753,10 +813,7 @@ impl ChatDownloadOptions {
     /// use stream_extractor::{ChatDownloadOptions, KickOptions};
     ///
     /// let opts = ChatDownloadOptions::default()
-    ///     // Thanks to the `Into` trait, we can pass `KickOptions` directly
-    ///     .with_platform_options(
-    ///         KickOptions::default().with_concurrency(20)
-    ///     );
+    ///     .with_platform_options(KickOptions::default().with_concurrency(20));
     /// ```
     #[must_use]
     pub fn with_platform_options<P: Into<PlatformChatOptions>>(mut self, opts: P) -> Self {
@@ -776,9 +833,6 @@ impl ChatDownloadOptions {
         self
     }
 
-    // -- internal accessors --------------------------------------------------
-
-    /// Retrieves Kick-specific configuration, returning defaults if not explicitly set.
     pub(crate) fn kick_options(&self) -> KickOptions {
         if let Some(PlatformChatOptions::Kick(opts)) = &self.platform_options {
             *opts
@@ -787,7 +841,6 @@ impl ChatDownloadOptions {
         }
     }
 
-    /// Retrieves Twitch-specific configuration, returning defaults if not explicitly set.
     #[allow(dead_code)]
     pub(crate) fn twitch_options(&self) -> TwitchOptions {
         if let Some(PlatformChatOptions::Twitch(opts)) = &self.platform_options {
@@ -797,8 +850,6 @@ impl ChatDownloadOptions {
         }
     }
 }
-
-
 
 impl Default for ChatDownloadOptions {
     fn default() -> Self {
@@ -816,11 +867,9 @@ impl Default for ChatDownloadOptions {
     }
 }
 
-
-// Ensure your manual Debug impl still exists, omitting the raw fields as needed
 impl fmt::Debug for ChatDownloadOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ChatOptions")
+        f.debug_struct("ChatDownloadOptions")
          .field("output_dir", &self.output_dir)
          .field("output_name", &self.output_name)
          .field("start_ms", &self.start_ms)
@@ -854,8 +903,6 @@ impl fmt::Debug for ChatDownloadOptions {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Badge {
-    /// Badge type identifier (e.g. `"moderator"`, `"subscriber"`).
-    /// Serialised as `"type"` in JSON to match the existing wire format.
     #[serde(rename = "type")]
     pub kind: String,
     pub text: String,
@@ -882,7 +929,6 @@ pub(crate) struct Message {
     pub chat_id: i64,
     pub user_id: i64,
     pub content: String,
-    /// Message kind (e.g. `"chat"`). Serialised as `"type"` in JSON.
     #[serde(rename = "type")]
     pub kind: String,
     pub metadata: String,
@@ -891,28 +937,30 @@ pub(crate) struct Message {
 }
 
 /// A saved chat message with precomputed timing fields relative to the
-/// stream start time.
+/// stream start time AND the downloaded range start time.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MessageSaved {
     pub id: String,
     pub chat_id: i64,
     pub user_id: i64,
     pub content: String,
-    /// Serialised as `"type"` in JSON to match the existing wire format.
     #[serde(rename = "type")]
     pub kind: String,
     pub metadata: String,
     pub sender: Sender,
-    /// Raw RFC 3339 timestamp.
     pub created_at_raw: String,
-    /// Seconds elapsed since stream start.
     pub created_at_secs: i64,
-    /// Human-readable offset `HH:MM:SS` from stream start.
     pub created_at_str: String,
+    pub range_offset_secs: i64,
+    pub range_offset_str: String,
 }
 
 impl MessageSaved {
-    pub(crate) fn from_message(msg: &Message, stream_start: DateTime<Utc>) -> Self {
+    pub(crate) fn from_message(
+        msg: &Message,
+        stream_start: DateTime<Utc>,
+        range_start_ms: u64,
+    ) -> Self {
         let created_at = DateTime::parse_from_rfc3339(&msg.created_at)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or(stream_start);
@@ -923,6 +971,11 @@ impl MessageSaved {
         let h = total_seconds / 3600;
         let m = (total_seconds % 3600) / 60;
         let s = total_seconds % 60;
+
+        let range_seconds = (total_seconds - (range_start_ms as i64 / 1000)).max(0);
+        let rh = range_seconds / 3600;
+        let rm = (range_seconds % 3600) / 60;
+        let rs = range_seconds % 60;
 
         Self {
             id: msg.id.clone(),
@@ -935,6 +988,8 @@ impl MessageSaved {
             created_at_raw: msg.created_at.clone(),
             created_at_secs: total_seconds,
             created_at_str: format!("{:02}:{:02}:{:02}", h, m, s),
+            range_offset_secs: range_seconds,
+            range_offset_str: format!("{:02}:{:02}:{:02}", rh, rm, rs),
         }
     }
 }
