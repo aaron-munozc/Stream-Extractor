@@ -52,6 +52,7 @@ pub(crate) mod http {
 ///     Stream::Live(live) => println!("Live: {:?}", live.username),
 /// }
 /// ```
+#[derive(Debug, Clone)]
 pub enum Stream {
     Vod(VodStream),
     Clip(ClipStream),
@@ -126,7 +127,7 @@ impl Stream {
 // ---------------------------------------------------------------------------
 // VodStream
 // ---------------------------------------------------------------------------
-
+#[derive(Debug, Clone)]
 pub struct VodStream {
     pub info: VodInfo,
     client: StreamClient,
@@ -181,7 +182,7 @@ impl std::ops::Deref for VodStream {
 // ---------------------------------------------------------------------------
 // ClipStream
 // ---------------------------------------------------------------------------
-
+#[derive(Debug, Clone)]
 pub struct ClipStream {
     pub info: ClipInfo,
     client: StreamClient,
@@ -242,6 +243,7 @@ impl std::ops::Deref for ClipStream {
 /// Live streams do not support chat or video downloading through this library
 /// — they expose channel metadata only. The `playback_url` in `LiveInfo` can
 /// be passed to an external HLS player directly.
+#[derive(Debug, Clone)]
 pub struct LiveStream {
     pub info: LiveInfo,
     #[allow(dead_code)]
