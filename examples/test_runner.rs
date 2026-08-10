@@ -4,11 +4,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use stream_extractor::{
-    fetch_stream, ChatDownloadOptions, ProgressCallback, ProgressPayload, Stream, StreamClient,
+    download_clip_chat, download_vod_chat, fetch_stream, ChatDownloadOptions, ProgressCallback,
+    ProgressPayload, Stream, StreamClient,
 };
 
 #[cfg(feature = "vod")]
-use stream_extractor::VodDownloadOptions;
+use stream_extractor::{download_clip_video, download_vod_video, VodDownloadOptions};
 
 struct TestCase {
     name: &'static str,
@@ -143,8 +144,7 @@ async fn execute_test(client: &StreamClient, out_dir: &Path, test: &TestCase) ->
             };
 
             let res = async {
-                let path = v
-                    .download_chat(chat_opts)
+                let path = download_vod_chat(client, v, chat_opts)
                     .await
                     .map_err(|e| format!("{:?}", e))?;
                 if !path.exists() {
@@ -173,8 +173,7 @@ async fn execute_test(client: &StreamClient, out_dir: &Path, test: &TestCase) ->
             };
 
             let res = async {
-                let path = c
-                    .download_chat(chat_opts)
+                let path = download_clip_chat(client, c, chat_opts)
                     .await
                     .map_err(|e| format!("{:?}", e))?;
                 if !path.exists() {
@@ -196,6 +195,10 @@ async fn execute_test(client: &StreamClient, out_dir: &Path, test: &TestCase) ->
             println!("  ℹ️ Chat skipped (Live stream)");
             None
         }
+        _ => {
+            println!("  ⚠️ Chat skipped (Unknown stream type)");
+            None
+        }
     };
 
     // --- VIDEO PHASE ---
@@ -213,8 +216,7 @@ async fn execute_test(client: &StreamClient, out_dir: &Path, test: &TestCase) ->
             };
 
             let res = async {
-                let path = v
-                    .download_video(video_opts)
+                let path = download_vod_video(client, v, video_opts)
                     .await
                     .map_err(|e| format!("{:?}", e))?;
                 if !path.exists() {
@@ -244,8 +246,7 @@ async fn execute_test(client: &StreamClient, out_dir: &Path, test: &TestCase) ->
             };
 
             let res = async {
-                let path = c
-                    .download_video(video_opts)
+                let path = download_clip_video(client, c, video_opts)
                     .await
                     .map_err(|e| format!("{:?}", e))?;
                 if !path.exists() {
@@ -265,6 +266,10 @@ async fn execute_test(client: &StreamClient, out_dir: &Path, test: &TestCase) ->
         }
         Stream::Live(_) => {
             println!("  ℹ️ Video skipped (Live stream)");
+            None
+        }
+        _ => {
+            println!("  ⚠️ Video skipped (Unknown stream type)");
             None
         }
     };

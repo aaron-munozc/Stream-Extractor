@@ -2,7 +2,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures::future::join_all;
 use rand::RngExt;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::fs as async_fs;
 use tokio::io::{AsyncWriteExt, BufWriter as AsyncBufWriter};
 use tokio::sync::mpsc;
@@ -17,23 +17,32 @@ use crate::types::{
     TwitchGqlVariables, VodInfo,
 };
 
-/// Twitch's own embedded web-player Client-ID, sourced from browser devtools.
-const TWITCH_GQL_CLIENT_ID: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
-
-/// Client-ID used by Twitch's comment API endpoints.
+const TWITCH_GQL_CLIENT_ID:  &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
 const TWITCH_CHAT_CLIENT_ID: &str = "kd1unb4b3q4t58fwlpcbzcbnm76a8fp";
 
 const SAVE_CHANNEL_CAPACITY: usize = 4096;
-const KICK_STEP_SECS: i64 = 5;
+const KICK_STEP_SECS:        i64   = 5;
 
 // ---------------------------------------------------------------------------
-// Internal shared helpers
+// Shared helpers
 // ---------------------------------------------------------------------------
 
 fn to_kick_timestamp(dt: DateTime<Utc>) -> String {
-    let secs = dt.format("%Y-%m-%dT%H:%M:%S").to_string();
-    let ms = dt.timestamp_subsec_millis();
-    format!("{}.{:03}Z", secs, ms)
+    format!(
+        "{}.{:03}Z",
+        dt.format("%Y-%m-%dT%H:%M:%S"),
+        dt.timestamp_subsec_millis()
+    )
+}
+
+/// Checks a cancel receiver and returns `Err(Cancelled)` if it has been set.
+#[inline]
+fn check_cancel(rx: Option<&tokio::sync::watch::Receiver<bool>>) -> Result<()> {
+    if rx.is_some_and(|rx| *rx.borrow()) {
+        Err(Error::Cancelled("User requested abort".into()))
+    } else {
+        Ok(())
+    }
 }
 
 async fn fetch_json_with_retries(
@@ -42,21 +51,11 @@ async fn fetch_json_with_retries(
     max_tries: usize,
     cancel_rx: Option<&tokio::sync::watch::Receiver<bool>>,
 ) -> Result<ChatResponse> {
-    let mut attempt = 0;
+    let mut attempt = 0usize;
     loop {
-        if let Some(rx) = cancel_rx
-            && *rx.borrow()
-        {
-            return Err(Error::Cancelled("User requested abort".into()));
-        }
+        check_cancel(cancel_rx)?;
 
-        match client
-            .inner
-            .get(url)
-            .header("Accept", "application/json")
-            .send()
-            .await
-        {
+        match client.inner.get(url).header("Accept", "application/json").send().await {
             Ok(resp) => {
                 let status = resp.status();
                 if status.as_u16() == 429 {
@@ -64,24 +63,19 @@ async fn fetch_json_with_retries(
                     if attempt > max_tries {
                         return Err(Error::RateLimited);
                     }
-
-                    if let Some(ra) = resp
+                    let wait = resp
                         .headers()
                         .get("retry-after")
                         .and_then(|h| h.to_str().ok())
                         .and_then(|s| s.parse::<u64>().ok())
-                    {
-                        tokio::time::sleep(std::time::Duration::from_secs(ra + 1)).await;
-                        continue;
-                    }
+                        .unwrap_or(2);
+                    tokio::time::sleep(std::time::Duration::from_secs(wait + 1)).await;
+                    continue;
                 } else if status.is_client_error() {
                     return Err(Error::InvalidUrl(url.to_string()));
                 } else {
                     let body = resp.text().await?;
-                    return match serde_json::from_str::<ChatResponse>(&body) {
-                        Ok(parsed) => Ok(parsed),
-                        Err(e) => Err(Error::Json(e)),
-                    };
+                    return serde_json::from_str::<ChatResponse>(&body).map_err(Error::Json);
                 }
             }
             Err(e) => {
@@ -94,16 +88,16 @@ async fn fetch_json_with_retries(
 
         let base_ms = 200u64;
         let exp = 2u64.saturating_pow(attempt.min(6) as u32);
-        let backoff_ms = base_ms.saturating_mul(exp);
-        let jitter: u64 = rand::rng().random_range(0..=(backoff_ms / 4));
+        let backoff = base_ms.saturating_mul(exp);
+        let jitter: u64 = rand::rng().random_range(0..=(backoff / 4));
         tokio::time::sleep(std::time::Duration::from_millis(
-            (backoff_ms + jitter).min(10_000),
+            (backoff + jitter).min(10_000),
         ))
             .await;
     }
 }
 
-/// Build the output path and create parent directories.
+/// Build the output path, creating parent directories on disk.
 fn resolve_output_path(
     options: &ChatDownloadOptions,
     platform: &Platform,
@@ -118,30 +112,73 @@ fn resolve_output_path(
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
     let base_name = options.output_name.clone().unwrap_or_else(|| {
-        let safe_username = username
+        let safe_user = username
             .unwrap_or("streamer")
             .replace(|c: char| !c.is_alphanumeric(), "_");
-        format!("{}_{}_{}", platform, safe_username, id_marker)
+        format!("{platform}_{safe_user}_{id_marker}")
     });
 
-    let target_name = if base_name.ends_with(".jsonl") {
+    let name = if base_name.ends_with(".jsonl") {
         base_name
     } else {
-        format!("{}.jsonl", base_name)
+        format!("{base_name}.jsonl")
     };
 
-    Ok(target_dir.join(target_name))
+    Ok(target_dir.join(name))
 }
 
 // ---------------------------------------------------------------------------
-// Twitch chat helpers
+// Async writer task — shared between VOD and clip chat downloads
 // ---------------------------------------------------------------------------
 
+/// Spawns a Tokio task that receives JSONL lines and writes them to `path`.
+///
+/// Returns `(sender, task_handle, io_error_receiver)`.
+/// The caller drains the sender, awaits the handle, then checks the error
+/// channel — the same pattern used in both VOD and clip flows.
+fn spawn_writer_task(
+    path: &Path,
+) -> (
+    mpsc::Sender<String>,
+    tokio::task::JoinHandle<()>,
+    tokio::sync::oneshot::Receiver<std::io::Error>,
+) {
+    let (tx, mut rx) = mpsc::channel::<String>(SAVE_CHANNEL_CAPACITY);
+    let (err_tx, err_rx) = tokio::sync::oneshot::channel::<std::io::Error>();
+    let path = path.to_path_buf();
+
+    let handle = tokio::spawn(async move {
+        let file = match async_fs::File::create(&path).await {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = err_tx.send(e);
+                return;
+            }
+        };
+        let mut buf = AsyncBufWriter::new(file);
+        while let Some(line) = rx.recv().await {
+            if buf.write_all(line.as_bytes()).await.is_err()
+                || buf.write_all(b"\n").await.is_err()
+            {
+                break;
+            }
+        }
+        let _ = buf.flush().await;
+    });
+
+    (tx, handle, err_rx)
+}
+
+// ---------------------------------------------------------------------------
+// Twitch chat
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
 async fn download_twitch_chat_inner(
     client: &StreamClient,
-    video_id: &str,              // numeric VOD ID (resolved from clip if needed)
-    clip_offset_sec: f64,        // 0.0 for plain VODs
-    clip_duration_sec: f64,      // 0.0 for plain VODs
+    video_id: &str,
+    clip_offset_sec: f64,
+    clip_duration_sec: f64,
     stream_start: DateTime<Utc>,
     start_offset_ms: u64,
     mut effective_end_ms: u64,
@@ -155,9 +192,9 @@ async fn download_twitch_chat_inner(
     }
 
     let window_length_ms = effective_end_ms.saturating_sub(start_offset_ms);
-    let mut offset_sec = clip_offset_sec + (start_offset_ms as f64) / 1000.0;
+    let mut offset_sec = clip_offset_sec + (start_offset_ms as f64 / 1000.0);
     let mut cursor: Option<String> = None;
-    let mut consecutive_empty = 0;
+    let mut consecutive_empty = 0usize;
 
     let absolute_end_ms = if effective_end_ms > 0 {
         (clip_offset_sec * 1000.0) as u64 + effective_end_ms
@@ -166,17 +203,11 @@ async fn download_twitch_chat_inner(
     };
 
     let report = |payload: ProgressPayload| {
-        if let Some(ref hook) = options.progress_hook {
-            hook(payload);
-        }
+        if let Some(ref hook) = options.progress_hook { hook(payload); }
     };
 
     loop {
-        if let Some(ref rx_cancel) = options.cancel_rx
-            && *rx_cancel.borrow()
-        {
-            return Err(Error::Cancelled("User requested abort".into()));
-        }
+        check_cancel(options.cancel_rx.as_ref())?;
 
         let body = TwitchGqlRequest {
             operation_name: "VideoCommentsByOffsetOrCursor",
@@ -187,7 +218,7 @@ async fn download_twitch_chat_inner(
             },
             extensions: TwitchGqlExtensions {
                 persisted_query: PersistedQuery {
-                    version: 1,
+                    version:     1,
                     sha256_hash: "b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044aa76adf6a",
                 },
             },
@@ -239,7 +270,6 @@ async fn download_twitch_chat_inner(
                 if absolute_msg_ms < (clip_offset_sec * 1000.0 + start_offset_ms as f64) {
                     continue;
                 }
-
                 if absolute_end_ms > 0 && absolute_msg_ms > absolute_end_ms as f64 {
                     continue;
                 }
@@ -261,16 +291,13 @@ async fn download_twitch_chat_inner(
                             let set_id = b.set_id.clone().unwrap_or_default();
                             let text = match set_id.as_str() {
                                 "broadcaster" => "👑",
-                                "moderator" => "⚔",
-                                "subscriber" => "★",
-                                "staff" => "⛨",
-                                _ => "",
+                                "moderator"   => "⚔",
+                                "subscriber"  => "★",
+                                "staff"       => "⛨",
+                                _             => "",
                             }
                                 .to_string();
-                            badges.push(crate::types::Badge {
-                                kind: set_id,
-                                text,
-                            });
+                            badges.push(crate::types::Badge { kind: set_id, text });
                         }
                     }
 
@@ -302,21 +329,21 @@ async fn download_twitch_chat_inner(
                     .unwrap_or_else(|| commenter_login.clone());
 
                 let msg = crate::types::Message {
-                    id: msg_id,
+                    id:      msg_id,
                     chat_id: video_id.parse().unwrap_or_else(|_| {
                         log::warn!("Failed to parse chat ID from video ID, defaulting to 0");
                         0
                     }),
-                    user_id: commenter_id,
+                    user_id:  commenter_id,
                     content,
-                    kind: "chat".into(),
-                    metadata: "".into(),
+                    kind:     "chat".into(),
+                    metadata: String::new(),
                     sender: crate::types::Sender {
-                        id: commenter_id,
-                        slug: commenter_login,
+                        id:       commenter_id,
+                        slug:     commenter_login,
                         username: commenter_name,
                         identity: crate::types::Identity {
-                            color: user_color,
+                            color:  user_color,
                             badges,
                         },
                     },
@@ -336,8 +363,8 @@ async fn download_twitch_chat_inner(
 
             if window_length_ms > 0 {
                 let current_ms = (max_page_offset * 1000.0) - (clip_offset_sec * 1000.0);
-                let pct = ((current_ms - start_offset_ms as f64) / window_length_ms as f64)
-                    * 100.0;
+                let pct = ((current_ms - start_offset_ms as f64) / window_length_ms as f64 * 100.0)
+                    .clamp(0.0, 100.0);
                 report(ProgressPayload::Downloading {
                     percent: pct as u8,
                     message: "Paginating Twitch chat...".into(),
@@ -349,16 +376,10 @@ async fn download_twitch_chat_inner(
             }
 
             let has_next = page_info.and_then(|p| p.has_next_page).unwrap_or(false);
-
             if has_next {
-                if let Some(last_edge) = edges.last() {
-                    if let Some(c) = &last_edge.cursor {
-                        cursor = Some(c.to_string());
-                    } else {
-                        break;
-                    }
-                } else {
-                    break;
+                match edges.last().and_then(|e| e.cursor.as_ref()) {
+                    Some(c) => cursor = Some(c.clone()),
+                    None    => break,
                 }
             } else {
                 break;
@@ -372,7 +393,7 @@ async fn download_twitch_chat_inner(
 }
 
 // ---------------------------------------------------------------------------
-// Kick chat helper
+// Kick chat
 // ---------------------------------------------------------------------------
 
 async fn download_kick_chat_inner(
@@ -388,24 +409,19 @@ async fn download_kick_chat_inner(
     let window_length_ms = effective_end_ms.saturating_sub(start_offset_ms);
     let aligned_start = (start_offset_ms as i64 / KICK_STEP_SECS) * KICK_STEP_SECS;
     let mut next_start = stream_start + ChronoDuration::milliseconds(aligned_start);
-    let mut empty_cycles = 0;
+    let mut empty_cycles = 0usize;
 
     let kick_opts = options.kick_options();
 
     let report = |payload: ProgressPayload| {
-        if let Some(ref hook) = options.progress_hook {
-            hook(payload);
-        }
+        if let Some(ref hook) = options.progress_hook { hook(payload); }
     };
 
     loop {
-        if let Some(ref rx_cancel) = options.cancel_rx
-            && *rx_cancel.borrow()
-        {
-            return Err(Error::Cancelled("User requested abort".into()));
-        }
+        check_cancel(options.cancel_rx.as_ref())?;
 
-        let mut starts = Vec::new();
+        // Build a batch of start timestamps.
+        let mut starts = Vec::with_capacity(kick_opts.concurrency);
         let mut candidate = next_start;
         for _ in 0..kick_opts.concurrency {
             if effective_end_ms > 0
@@ -420,42 +436,43 @@ async fn download_kick_chat_inner(
             break;
         }
 
-        let mut futs = Vec::new();
-        for st in &starts {
-            let mut url = Url::parse(&format!(
-                "https://web.kick.com/api/v1/chat/{}/history",
-                chat_id
-            ))?;
-            url.query_pairs_mut()
-               .append_pair("start_time", &to_kick_timestamp(*st));
-            let url_str = url.to_string();
-            let cancel_ref = options.cancel_rx.clone();
-            let cl = client.clone();
-            futs.push(async move {
-                fetch_json_with_retries(&cl, &url_str, options.max_retries, cancel_ref.as_ref())
-                    .await
-            });
-        }
+        let futs: Vec<_> = starts
+            .iter()
+            .map(|st| {
+                let mut url = Url::parse(&format!(
+                    "https://web.kick.com/api/v1/chat/{chat_id}/history"
+                ))
+                    .expect("static URL is valid");
+                url.query_pairs_mut()
+                   .append_pair("start_time", &to_kick_timestamp(*st));
+                let url_str = url.to_string();
+                let cancel_rx = options.cancel_rx.clone();
+                let cl = client.clone();
+                let max_retries = options.max_retries;
+                async move {
+                    fetch_json_with_retries(&cl, &url_str, max_retries, cancel_rx.as_ref()).await
+                }
+            })
+            .collect();
 
         let results = join_all(futs).await;
         let mut got_messages = false;
 
         for res in results {
-            if let Ok(resp) = res
-                && resp.message == "OK"
-                && !resp.data.messages.is_empty()
-            {
-                got_messages = true;
-                for m in &resp.data.messages {
-                    if seen_msg_ids.insert(m.id.clone()) {
-                        let _ = tx
-                            .send(serde_json::to_string(&MessageSaved::from_message(
-                                m,
-                                stream_start,
-                                start_offset_ms,
-                            ))?)
-                            .await;
-                    }
+            let resp = match res {
+                Ok(r) if r.message == "OK" && !r.data.messages.is_empty() => r,
+                _ => continue,
+            };
+            got_messages = true;
+            for m in &resp.data.messages {
+                if seen_msg_ids.insert(m.id.clone()) {
+                    let _ = tx
+                        .send(serde_json::to_string(&MessageSaved::from_message(
+                            m,
+                            stream_start,
+                            start_offset_ms,
+                        ))?)
+                        .await;
                 }
             }
         }
@@ -472,9 +489,9 @@ async fn download_kick_chat_inner(
         next_start = candidate;
 
         if window_length_ms > 0 {
-            let elapsed =
-                (next_start - stream_start).num_milliseconds() as f64 - start_offset_ms as f64;
-            let pct = (elapsed / window_length_ms as f64) * 100.0;
+            let elapsed = (next_start - stream_start).num_milliseconds() as f64
+                - start_offset_ms as f64;
+            let pct = (elapsed / window_length_ms as f64 * 100.0).clamp(0.0, 100.0);
             report(ProgressPayload::Downloading {
                 percent: pct as u8,
                 message: "Fetching Kick chat buckets...".into(),
@@ -490,19 +507,39 @@ async fn download_kick_chat_inner(
 }
 
 // ---------------------------------------------------------------------------
+// Shared finalisation helper
+// ---------------------------------------------------------------------------
+
+/// Await the writer task, check for I/O errors, then atomically rename the
+/// temp file to the final path.
+async fn finalise_chat_file(
+    writer_task: tokio::task::JoinHandle<()>,
+    mut err_rx: tokio::sync::oneshot::Receiver<std::io::Error>,
+    tmp_path: &Path,
+    final_path: &Path,
+    report: impl Fn(ProgressPayload),
+) -> Result<PathBuf> {
+    writer_task.await.ok();
+    if let Ok(e) = err_rx.try_recv() {
+        return Err(Error::Io(e));
+    }
+    async_fs::rename(tmp_path, final_path).await?;
+    report(ProgressPayload::Done);
+    Ok(final_path.to_path_buf())
+}
+
+// ---------------------------------------------------------------------------
 // Public entry points
 // ---------------------------------------------------------------------------
 
-/// Download chat for a VOD. Works for both Twitch and Kick VODs.
+/// Download chat for a VOD (Twitch or Kick).
 pub(crate) async fn download_vod_chat(
     client: &StreamClient,
     vod: &VodInfo,
     options: ChatDownloadOptions,
 ) -> Result<PathBuf> {
     let report = |payload: ProgressPayload| {
-        if let Some(ref hook) = options.progress_hook {
-            hook(payload);
-        }
+        if let Some(ref hook) = options.progress_hook { hook(payload); }
     };
 
     report(ProgressPayload::Downloading {
@@ -510,114 +547,56 @@ pub(crate) async fn download_vod_chat(
         message: "Initializing chat download...".into(),
     });
 
-    let stream_start = vod.start_time.unwrap_or_else(Utc::now);
-    let duration_ms = vod.duration.unwrap_or(0) as u64 * 1000;
-    let start_offset_ms = options.start_ms.unwrap_or(0);
-    let buffer = options.buffer_ms.unwrap_or(0);
-
-    let effective_end_ms = options.end_ms.map(|e| e + buffer).unwrap_or_else(|| {
-        if duration_ms > 0 {
-            duration_ms + buffer
-        } else {
-            0
-        }
+    let stream_start      = vod.start_time.unwrap_or_else(Utc::now);
+    let duration_ms       = vod.duration.unwrap_or(0) as u64 * 1000;
+    let start_offset_ms   = options.start_ms.unwrap_or(0);
+    let buffer            = options.buffer_ms.unwrap_or(0);
+    let effective_end_ms  = options.end_ms.map(|e| e + buffer).unwrap_or_else(|| {
+        if duration_ms > 0 { duration_ms + buffer } else { 0 }
     });
 
-    let final_output_path = resolve_output_path(
-        &options,
-        &vod.platform,
-        vod.username.as_deref(),
-        &vod.vod_id,
-    )?;
-
-    if let Some(parent) = final_output_path.parent() {
+    let final_path = resolve_output_path(&options, &vod.platform, vod.username.as_deref(), &vod.vod_id)?;
+    if let Some(parent) = final_path.parent() {
         async_fs::create_dir_all(parent).await?;
     }
 
-    let (tx, mut rx) = mpsc::channel::<String>(SAVE_CHANNEL_CAPACITY);
-    let tmp_path = final_output_path.with_extension("jsonl.tmp");
-    let writer_tmp = tmp_path.clone();
-    let (err_tx, mut err_rx) = tokio::sync::oneshot::channel::<std::io::Error>();
-
-    let writer_task = tokio::spawn(async move {
-        let file = match async_fs::File::create(&writer_tmp).await {
-            Ok(f) => f,
-            Err(e) => {
-                let _ = err_tx.send(e);
-                return;
-            }
-        };
-        let mut buf = AsyncBufWriter::new(file);
-        while let Some(line) = rx.recv().await {
-            if buf.write_all(line.as_bytes()).await.is_err()
-                || buf.write_all(b"\n").await.is_err()
-            {
-                break;
-            }
-        }
-        let _ = buf.flush().await;
-    });
-
+    let tmp_path = final_path.with_extension("jsonl.tmp");
+    let (tx, writer_task, err_rx) = spawn_writer_task(&tmp_path);
     let mut seen_msg_ids = HashSet::new();
 
     match vod.platform {
         Platform::Twitch => {
-            // vod_id is a numeric string on Twitch
             download_twitch_chat_inner(
-                client,
-                &vod.vod_id,
-                0.0,
-                0.0,
-                stream_start,
-                start_offset_ms,
-                effective_end_ms,
-                buffer,
-                &options,
-                tx,
-                &mut seen_msg_ids,
-            )
-                .await?;
+                client, &vod.vod_id, 0.0, 0.0,
+                stream_start, start_offset_ms, effective_end_ms, buffer,
+                &options, tx, &mut seen_msg_ids,
+            ).await?;
         }
         Platform::Kick => {
             let chat_id = vod.chat_id.ok_or(Error::MissingId)?;
             download_kick_chat_inner(
-                client,
-                chat_id,
-                stream_start,
-                start_offset_ms,
-                effective_end_ms,
-                &options,
-                tx,
-                &mut seen_msg_ids,
-            )
-                .await?;
+                client, chat_id,
+                stream_start, start_offset_ms, effective_end_ms,
+                &options, tx, &mut seen_msg_ids,
+            ).await?;
         }
     }
 
-    writer_task.await.ok();
-    if let Ok(e) = err_rx.try_recv() {
-        return Err(Error::Io(e));
-    }
-    async_fs::rename(&tmp_path, &final_output_path).await?;
-
-    report(ProgressPayload::Done);
-    Ok(final_output_path)
+    finalise_chat_file(writer_task, err_rx, &tmp_path, &final_path, report).await
 }
 
 /// Download chat for a clip.
 ///
-/// For Twitch clips the clip slug is resolved to its parent VOD ID + offset
-/// so that the standard comment API can be used. For Kick clips, the clip
-/// window is fetched as a time range on the parent chatroom.
+/// For Twitch clips the slug is resolved to its parent VOD ID + offset via
+/// GQL. For Kick clips, the clip window is fetched as a time range of the
+/// parent chatroom.
 pub(crate) async fn download_clip_chat(
     client: &StreamClient,
     clip: &ClipInfo,
     options: ChatDownloadOptions,
 ) -> Result<PathBuf> {
     let report = |payload: ProgressPayload| {
-        if let Some(ref hook) = options.progress_hook {
-            hook(payload);
-        }
+        if let Some(ref hook) = options.progress_hook { hook(payload); }
     };
 
     report(ProgressPayload::Downloading {
@@ -625,50 +604,21 @@ pub(crate) async fn download_clip_chat(
         message: "Initializing clip chat download...".into(),
     });
 
-    let stream_start = clip.start_time.unwrap_or_else(Utc::now);
+    let stream_start    = clip.start_time.unwrap_or_else(Utc::now);
     let start_offset_ms = options.start_ms.unwrap_or(0);
-    let buffer = options.buffer_ms.unwrap_or(0);
+    let buffer          = options.buffer_ms.unwrap_or(0);
 
-    let final_output_path = resolve_output_path(
-        &options,
-        &clip.platform,
-        clip.username.as_deref(),
-        &clip.clip_id,
-    )?;
-
-    if let Some(parent) = final_output_path.parent() {
+    let final_path = resolve_output_path(&options, &clip.platform, clip.username.as_deref(), &clip.clip_id)?;
+    if let Some(parent) = final_path.parent() {
         async_fs::create_dir_all(parent).await?;
     }
 
-    let (tx, mut rx) = mpsc::channel::<String>(SAVE_CHANNEL_CAPACITY);
-    let tmp_path = final_output_path.with_extension("jsonl.tmp");
-    let writer_tmp = tmp_path.clone();
-    let (err_tx, mut err_rx) = tokio::sync::oneshot::channel::<std::io::Error>();
-
-    let writer_task = tokio::spawn(async move {
-        let file = match async_fs::File::create(&writer_tmp).await {
-            Ok(f) => f,
-            Err(e) => {
-                let _ = err_tx.send(e);
-                return;
-            }
-        };
-        let mut buf = AsyncBufWriter::new(file);
-        while let Some(line) = rx.recv().await {
-            if buf.write_all(line.as_bytes()).await.is_err()
-                || buf.write_all(b"\n").await.is_err()
-            {
-                break;
-            }
-        }
-        let _ = buf.flush().await;
-    });
-
+    let tmp_path = final_path.with_extension("jsonl.tmp");
+    let (tx, writer_task, err_rx) = spawn_writer_task(&tmp_path);
     let mut seen_msg_ids = HashSet::new();
 
     match clip.platform {
         Platform::Twitch => {
-            // Resolve the clip slug → parent VOD ID + offset via GQL.
             report(ProgressPayload::Downloading {
                 percent: 0,
                 message: "Resolving Twitch clip to parent VOD...".into(),
@@ -681,78 +631,56 @@ pub(crate) async fn download_clip_chat(
                 )
             });
 
-            let resp = client
+            let parsed: TwitchGqlClipResponse = client
                 .inner
                 .post("https://gql.twitch.tv/gql")
                 .header("Client-ID", TWITCH_GQL_CLIENT_ID)
                 .json(&clip_query)
                 .send()
+                .await?
+                .json()
                 .await?;
 
-            let parsed: TwitchGqlClipResponse = resp.json().await?;
-
-            let clip_node = parsed.data.and_then(|d| d.clip).ok_or_else(|| {
-                Error::InvalidUrl("Invalid Twitch clip slug or API error.".into())
-            })?;
+            let clip_node = parsed
+                .data
+                .and_then(|d| d.clip)
+                .ok_or_else(|| Error::InvalidUrl("Invalid Twitch clip slug or API error.".into()))?;
 
             let video_id = clip_node
                 .video
                 .and_then(|v| v.id)
                 .ok_or_else(|| Error::InvalidUrl("Clip has no associated VOD.".into()))?;
 
-            let clip_offset_sec = clip_node.video_offset_seconds.unwrap_or(0.0);
+            let clip_offset_sec   = clip_node.video_offset_seconds.unwrap_or(0.0);
             let clip_duration_sec = clip_node.duration_seconds.unwrap_or(0.0);
-
-            let effective_end_ms = options
+            let effective_end_ms  = options
                 .end_ms
                 .map(|e| e + buffer)
                 .unwrap_or_else(|| (clip_duration_sec * 1000.0) as u64 + buffer);
 
             download_twitch_chat_inner(
-                client,
-                &video_id,
-                clip_offset_sec,
-                clip_duration_sec,
-                stream_start,
-                start_offset_ms,
-                effective_end_ms,
-                buffer,
-                &options,
-                tx,
-                &mut seen_msg_ids,
-            )
-                .await?;
+                client, &video_id,
+                clip_offset_sec, clip_duration_sec,
+                stream_start, start_offset_ms, effective_end_ms, buffer,
+                &options, tx, &mut seen_msg_ids,
+            ).await?;
         }
-        Platform::Kick => {
-            // Kick clip chat = a time-window of the parent chatroom.
-            let chat_id = clip.chat_id.ok_or(Error::MissingId)?;
-            let clip_duration_ms = clip.duration.unwrap_or(0) as u64 * 1000;
 
+        Platform::Kick => {
+            let chat_id        = clip.chat_id.ok_or(Error::MissingId)?;
+            let clip_dur_ms    = clip.duration.unwrap_or(0) as u64 * 1000;
             let effective_end_ms = options
                 .end_ms
                 .map(|e| e + buffer)
-                .unwrap_or(clip_duration_ms + buffer);
+                .unwrap_or(clip_dur_ms + buffer);
 
             download_kick_chat_inner(
-                client,
-                chat_id,
-                stream_start,
-                start_offset_ms,
-                effective_end_ms,
-                &options,
-                tx,
-                &mut seen_msg_ids,
-            )
-                .await?;
+                client, chat_id,
+                stream_start, start_offset_ms, effective_end_ms,
+                &options, tx, &mut seen_msg_ids,
+            ).await?;
         }
     }
 
-    writer_task.await.ok();
-    if let Ok(e) = err_rx.try_recv() {
-        return Err(Error::Io(e));
-    }
-    async_fs::rename(&tmp_path, &final_output_path).await?;
-
-    report(ProgressPayload::Done);
-    Ok(final_output_path)
+    finalise_chat_file(writer_task, err_rx, &tmp_path, &final_path, report).await
 }
