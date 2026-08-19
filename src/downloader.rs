@@ -14,8 +14,8 @@ use url::Url;
 use crate::client::StreamClient;
 use crate::error::{Error, Result};
 use crate::types::{
-    ClipInfo, ProgressPayload, QualityPreference, StreamQuality, StreamResolution, VodInfo,
-    VodDownloadOptions,
+    ClipInfo, ProgressPayload, QualityPreference, StreamQuality, StreamResolution,
+    VodDownloadOptions, VodInfo,
 };
 
 const RETRIES: usize = 3;
@@ -62,7 +62,9 @@ pub(crate) async fn run_ffmpeg(
     };
 
     if !output.status.success() {
-        return Err(Error::Ffmpeg(String::from_utf8_lossy(&output.stderr).into_owned()));
+        return Err(Error::Ffmpeg(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ));
     }
     Ok(())
 }
@@ -123,7 +125,9 @@ pub(crate) async fn get_qualities_internal(
             resolution: None,
             bandwidth: None,
         }]),
-        Err(e) => Err(Error::PlaylistParse(format!("Manifest Parsing Failed: {e:?}"))),
+        Err(e) => Err(Error::PlaylistParse(format!(
+            "Manifest Parsing Failed: {e:?}"
+        ))),
     }
 }
 
@@ -152,8 +156,8 @@ async fn resolve_media_playlist(
                     .or_else(|| master.variants.iter().max_by_key(|v| v.bandwidth)),
                 QualityPreference::Index(idx) => master.variants.get(idx),
             }
-                .or_else(|| master.variants.first())
-                .ok_or_else(|| Error::PlaylistParse("No variants found in master playlist".into()))?;
+            .or_else(|| master.variants.first())
+            .ok_or_else(|| Error::PlaylistParse("No variants found in master playlist".into()))?;
 
             let mut joined = base.join(&variant.uri)?;
             if joined.query().is_none() && base.query().is_some() {
@@ -197,7 +201,7 @@ async fn download_segment(
                                     tokio::time::sleep(Duration::from_millis(
                                         400 * attempts as u64,
                                     ))
-                                        .await;
+                                    .await;
                                     break;
                                 }
                                 return Err(Error::Network(e));
@@ -283,13 +287,13 @@ async fn download_segments(
 
 /// Parameters for `download_m3u8`, split out to avoid a 8-argument function.
 struct DownloadRequest<'a> {
-    m3u8_url:      &'a str,
+    m3u8_url: &'a str,
     duration_secs: Option<i64>,
-    platform_str:  &'a str,
-    username:      Option<&'a str>,
-    id_marker:     &'a str,
-    options:       &'a VodDownloadOptions,
-    target_dir:    &'a Path,
+    platform_str: &'a str,
+    username: Option<&'a str>,
+    id_marker: &'a str,
+    options: &'a VodDownloadOptions,
+    target_dir: &'a Path,
 }
 
 async fn download_m3u8(req: DownloadRequest<'_>, client: &StreamClient) -> Result<PathBuf> {
@@ -392,7 +396,10 @@ async fn download_m3u8(req: DownloadRequest<'_>, client: &StreamClient) -> Resul
             ));
         }
         Err(e) => {
-            let head: String = String::from_utf8_lossy(&media_bytes).chars().take(150).collect();
+            let head: String = String::from_utf8_lossy(&media_bytes)
+                .chars()
+                .take(150)
+                .collect();
             return Err(Error::PlaylistParse(format!(
                 "Manifest Error: {e:?} | URL: {playlist_url} | Head: {head}"
             )));
@@ -445,12 +452,16 @@ async fn download_m3u8(req: DownloadRequest<'_>, client: &StreamClient) -> Resul
             .collect::<Vec<_>>()
             .join("\n"),
     )
-        .await?;
+    .await?;
 
     report(ProgressPayload::Merging);
 
     let mut args: Vec<String> = vec![
-        "-y".into(), "-f".into(), "concat".into(), "-safe".into(), "0".into(),
+        "-y".into(),
+        "-f".into(),
+        "concat".into(),
+        "-safe".into(),
+        "0".into(),
     ];
     if start_target > 0.0 {
         args.extend([
@@ -463,16 +474,23 @@ async fn download_m3u8(req: DownloadRequest<'_>, client: &StreamClient) -> Resul
         args.extend(["-t".into(), format!("{:.3}", (d - start_target) / 1000.0)]);
     }
     args.extend([
-        "-c".into(), "copy".into(),
-        "-movflags".into(), "+faststart".into(),
+        "-c".into(),
+        "copy".into(),
+        "-movflags".into(),
+        "+faststart".into(),
         final_output.to_string_lossy().into_owned(),
     ]);
 
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     if let Err(e) = run_ffmpeg(&arg_refs, options.cancel_rx.clone()).await {
-        log::error!("FFmpeg failed. Segments preserved in: {}", tmp_path.display());
+        log::error!(
+            "FFmpeg failed. Segments preserved in: {}",
+            tmp_path.display()
+        );
         let _ = tmp.keep();
-        report(ProgressPayload::Error { message: e.to_string() });
+        report(ProgressPayload::Error {
+            message: e.to_string(),
+        });
         return Err(e);
     }
 
@@ -502,15 +520,15 @@ pub(crate) async fn download_vod_video(
         DownloadRequest {
             m3u8_url,
             duration_secs: vod.duration,
-            platform_str:  &vod.platform.to_string(),
-            username:       vod.username.as_deref(),
-            id_marker:      &vod.vod_id,
-            options:        &options,
-            target_dir:     &target_dir,
+            platform_str: &vod.platform.to_string(),
+            username: vod.username.as_deref(),
+            id_marker: &vod.vod_id,
+            options: &options,
+            target_dir: &target_dir,
         },
         client,
     )
-        .await
+    .await
 }
 
 /// Download a clip's video track.
@@ -524,17 +542,17 @@ pub(crate) async fn download_clip_video(
 
     download_m3u8(
         DownloadRequest {
-            m3u8_url:      url,
+            m3u8_url: url,
             duration_secs: clip.duration,
-            platform_str:  &clip.platform.to_string(),
-            username:       clip.username.as_deref(),
-            id_marker:      &clip.clip_id,
-            options:        &options,
-            target_dir:     &target_dir,
+            platform_str: &clip.platform.to_string(),
+            username: clip.username.as_deref(),
+            id_marker: &clip.clip_id,
+            options: &options,
+            target_dir: &target_dir,
         },
         client,
     )
-        .await
+    .await
 }
 
 /// Get available quality variants for a VOD.

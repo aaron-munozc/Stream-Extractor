@@ -1,5 +1,5 @@
-use regex::Regex;
 use crate::http::StatusCode;
+use regex::Regex;
 use serde::Deserialize;
 use url::Url;
 use urlencoding::encode;
@@ -7,7 +7,7 @@ use urlencoding::encode;
 use crate::client::StreamClient;
 use crate::error::Result;
 use crate::types::{
-    parse_datetime, ClipInfo, LiveInfo, Platform, TwitchClipQueryResponse, VodInfo,
+    ClipInfo, LiveInfo, Platform, SimpleGqlQuery, TwitchClipQueryResponse, VodInfo, parse_datetime,
 };
 
 /// Twitch's own embedded web-player Client-ID, sourced from browser devtools.
@@ -70,15 +70,25 @@ pub(crate) struct GqlVideoTokenResponse {
     pub(crate) data: Option<GqlVideoTokenData>,
 }
 
-// Twitch Live stream info from GQL
-#[derive(Debug, Deserialize)]
-pub(crate) struct GqlStreamData {
-    pub(crate) stream: Option<GqlLiveStream>,
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct PlaybackAccessTokenVariables<'a> {
+    #[serde(rename = "isLive")]
+    pub(crate) is_live: bool,
+    pub(crate) login: &'a str,
+    #[serde(rename = "isVod")]
+    pub(crate) is_vod: bool,
+    #[serde(rename = "vodID")]
+    pub(crate) vod_id: &'a str,
+    #[serde(rename = "playerType")]
+    pub(crate) player_type: &'a str,
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct GqlLiveStreamResponse {
-    pub(crate) data: Option<GqlStreamData>,
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct PlaybackAccessTokenQuery<'a> {
+    #[serde(rename = "operationName")]
+    pub(crate) operation_name: &'a str,
+    pub(crate) query: &'a str,
+    pub(crate) variables: PlaybackAccessTokenVariables<'a>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,6 +105,8 @@ pub(crate) struct GqlLiveStream {
 #[derive(Debug, Deserialize)]
 pub(crate) struct GqlChannelData {
     pub(crate) user: Option<GqlChannelUser>,
+    #[serde(rename = "streamPlaybackAccessToken")]
+    pub(crate) stream_playback_access_token: Option<VideoPlaybackAccessToken>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,6 +116,7 @@ pub(crate) struct GqlChannelResponse {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct GqlChannelUser {
+    pub(crate) id: Option<String>,
     pub(crate) login: Option<String>,
     #[serde(rename = "displayName")]
     pub(crate) display_name: Option<String>,
@@ -157,12 +170,12 @@ async fn fetch_twitch_video_graphql(
     video_id: &str,
 ) -> Result<Option<GqlVideo>> {
     let url = "https://gql.twitch.tv/gql";
-    let body = serde_json::json!({
-        "query": format!(
+    let body = SimpleGqlQuery {
+        query: format!(
             "query {{ video(id: \"{}\") {{ title, thumbnailURLs(height: 180, width: 320), createdAt, lengthSeconds, owner {{ id, displayName, login }}, viewCount }} }}",
             video_id
-        )
-    });
+        ),
+    };
 
     let resp = client
         .inner
@@ -185,17 +198,17 @@ async fn fetch_twitch_access_token(
     client: &StreamClient,
     video_id: &str,
 ) -> Result<Option<TwitchAccessTokenResponse>> {
-    let gql_body = serde_json::json!({
-        "operationName": "PlaybackAccessToken_Template",
-        "query": "query PlaybackAccessToken_Template($login: String!, $isLive: Boolean!, $vodID: ID!, $isVod: Boolean!, $playerType: String!) { streamPlaybackAccessToken(channelName: $login, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: $playerType}) @include(if: $isLive) { value signature __typename } videoPlaybackAccessToken(id: $vodID, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: $playerType}) @include(if: $isVod) { value signature __typename }}",
-        "variables": {
-            "isLive": false,
-            "login": "",
-            "isVod": true,
-            "vodID": video_id,
-            "playerType": "embed"
-        }
-    });
+    let gql_body = PlaybackAccessTokenQuery {
+        operation_name: "PlaybackAccessToken_Template",
+        query: "query PlaybackAccessToken_Template($login: String!, $isLive: Boolean!, $vodID: ID!, $isVod: Boolean!, $playerType: String!) { streamPlaybackAccessToken(channelName: $login, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: $playerType}) @include(if: $isLive) { value signature __typename } videoPlaybackAccessToken(id: $vodID, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: $playerType}) @include(if: $isVod) { value signature __typename }}",
+        variables: PlaybackAccessTokenVariables {
+            is_live: false,
+            login: "",
+            is_vod: true,
+            vod_id: video_id,
+            player_type: "embed",
+        },
+    };
 
     let gql_resp = client
         .inner
@@ -234,12 +247,12 @@ pub(crate) async fn fetch_twitch_clip_metadata(
 ) -> Result<Option<ClipInfo>> {
     let url = "https://gql.twitch.tv/gql";
 
-    let info_body = serde_json::json!({
-        "query": format!(
+    let info_body = SimpleGqlQuery {
+        query: format!(
             "query {{ clip(slug: \"{}\") {{ id, title, durationSeconds, viewCount, createdAt, thumbnailURL, broadcaster {{ displayName, login }}, videoQualities {{ sourceURL }}, playbackAccessToken(params: {{ platform: \"web\", playerBackend: \"mediaplayer\", playerType: \"embed\" }}) {{ signature, value }} }} }}",
             clip_id
-        )
-    });
+        ),
+    };
 
     let info_resp = client
         .inner
@@ -312,7 +325,11 @@ pub(crate) async fn fetch_twitch_clip_metadata(
         duration: clip.duration_seconds,
         views: clip.view_count,
         chat_id: None, // Twitch clips reference a VOD; chat is fetched via VOD ID in chat.rs
-        playback_url: if mp4_url.is_empty() { None } else { Some(mp4_url) },
+        playback_url: if mp4_url.is_empty() {
+            None
+        } else {
+            Some(mp4_url)
+        },
     }))
 }
 
@@ -333,8 +350,7 @@ pub(crate) async fn fetch_twitch_vod_metadata(
         }
     };
 
-    let master_url =
-        build_twitch_master_m3u8(video_id, &token_response.token, &token_response.sig);
+    let master_url = build_twitch_master_m3u8(video_id, &token_response.token, &token_response.sig);
 
     let master_res = client.inner.get(&master_url).send().await?;
 
@@ -382,16 +398,22 @@ pub(crate) async fn fetch_twitch_vod_metadata(
             }
         });
 
-    let (title, thumbnail_url, start_time, duration, views, username) =
-        if let Some(g) = gql_video {
-            let thumb = g
-                .thumbnail_urls
-                .and_then(|v| v.into_iter().find(|s| s.starts_with("http")));
-            let name = g.owner.and_then(|o| o.login.or(o.display_name));
-            (g.title, thumb, g.created_at, g.length_seconds, g.view_count, name)
-        } else {
-            (None, None, None, None, None, None)
-        };
+    let (title, thumbnail_url, start_time, duration, views, username) = if let Some(g) = gql_video {
+        let thumb = g
+            .thumbnail_urls
+            .and_then(|v| v.into_iter().find(|s| s.starts_with("http")));
+        let name = g.owner.and_then(|o| o.login.or(o.display_name));
+        (
+            g.title,
+            thumb,
+            g.created_at,
+            g.length_seconds,
+            g.view_count,
+            name,
+        )
+    } else {
+        (None, None, None, None, None, None)
+    };
 
     Ok(Some(VodInfo {
         vod_id: video_id.to_string(),
@@ -412,12 +434,29 @@ pub(crate) async fn fetch_twitch_live_metadata(
     client: &StreamClient,
     channel_login: &str,
 ) -> Result<Option<LiveInfo>> {
-    let body = serde_json::json!({
-        "query": format!(
-            "query {{ user(login: \"{}\") {{ login, displayName, stream {{ viewersCount, createdAt, title, previewImageURL(width: 1280, height: 720) }} }} }}",
+    // 1. Fetch user data AND the access token at the root level of the GQL query
+    let body = SimpleGqlQuery {
+        query: format!(
+            "query {{ \
+            user(login: \"{0}\") {{ \
+                id, \
+                login, \
+                displayName, \
+                stream {{ \
+                    viewersCount, \
+                    createdAt, \
+                    title, \
+                    previewImageURL(width: 1280, height: 720) \
+                }} \
+            }}, \
+            streamPlaybackAccessToken(channelName: \"{0}\", params: {{ platform: \"web\", playerBackend: \"mediaplayer\", playerType: \"site\" }}) {{ \
+                value, \
+                signature \
+            }} \
+        }}",
             channel_login
-        )
-    });
+        ),
+    };
 
     let resp = client
         .inner
@@ -434,7 +473,14 @@ pub(crate) async fn fetch_twitch_live_metadata(
     let resp = resp.error_for_status()?;
     let parsed: GqlChannelResponse = resp.json().await?;
 
-    let user = match parsed.data.and_then(|d| d.user) {
+    // Safely extract the root data structure
+    let data = match parsed.data {
+        Some(d) => d,
+        None => return Ok(None),
+    };
+
+    // Extract the nested user block
+    let user = match data.user {
         Some(u) => u,
         None => return Ok(None),
     };
@@ -448,6 +494,23 @@ pub(crate) async fn fetch_twitch_live_metadata(
         (None, None, None, None)
     };
 
+    // 2. Parse the chat_id (Twitch internal User ID)
+    let chat_id = user.id.and_then(|id_str| id_str.parse::<i64>().ok());
+
+    // 3. Construct the Usher playback URL using the root-level GQL signature and token
+    let playback_url = data.stream_playback_access_token.map(|token| {
+        let sig = token.signature;
+        let val = token.value;
+
+        // URL encode the JSON token value
+        let encoded_val: String = url::form_urlencoded::byte_serialize(val.as_bytes()).collect();
+
+        format!(
+            "https://usher.ttvnw.net/api/channel/hls/{}.m3u8?allow_source=true&sig={}&token={}",
+            channel_login, sig, encoded_val
+        )
+    });
+
     Ok(Some(LiveInfo {
         platform: Platform::Twitch,
         username,
@@ -455,9 +518,9 @@ pub(crate) async fn fetch_twitch_live_metadata(
         thumbnail_url,
         start_time: parse_datetime(start_time),
         viewer_count,
-        followers: None, // Not in this GQL query; add a separate request if needed
-        playback_url: None, // Twitch live playback requires a stream access token (separate call)
-        chat_id: None,
+        followers: None,
+        playback_url,
+        chat_id,
         is_live,
     }))
 }

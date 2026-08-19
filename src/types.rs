@@ -38,13 +38,21 @@ pub(crate) fn parse_datetime(s: Option<String>) -> Option<DateTime<Utc>> {
 /// Progress update emitted during a download or merge operation.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde-types", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde-types", serde(tag = "status", rename_all = "camelCase"))]
+#[cfg_attr(
+    feature = "serde-types",
+    serde(tag = "status", rename_all = "camelCase")
+)]
 pub enum ProgressPayload {
     /// `percent` is clamped to 0–100 by the caller.
-    Downloading { percent: u8, message: String },
+    Downloading {
+        percent: u8,
+        message: String,
+    },
     Merging,
     Done,
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 /// A cheaply-clonable progress callback. Pass one to any `*DownloadOptions`.
@@ -105,7 +113,7 @@ impl VideoFormat {
             VideoFormat::Mp4 => "mp4",
             VideoFormat::Mkv => "mkv",
             VideoFormat::Mov => "mov",
-            VideoFormat::Ts  => "ts",
+            VideoFormat::Ts => "ts",
         }
     }
 }
@@ -126,16 +134,16 @@ impl VideoFormat {
 #[cfg(feature = "vod")]
 #[derive(Clone, Default)]
 pub struct VodDownloadOptions {
-    pub output_dir:   Option<PathBuf>,
-    pub output_name:  Option<String>,
-    pub threads:      usize,
-    pub quality:      QualityPreference,
-    pub format:       VideoFormat,
-    pub start_ms:     Option<u64>,
-    pub end_ms:       Option<u64>,
-    pub buffer_ms:    Option<u64>,
+    pub output_dir: Option<PathBuf>,
+    pub output_name: Option<String>,
+    pub threads: usize,
+    pub quality: QualityPreference,
+    pub format: VideoFormat,
+    pub start_ms: Option<u64>,
+    pub end_ms: Option<u64>,
+    pub buffer_ms: Option<u64>,
     pub progress_hook: Option<ProgressCallback>,
-    pub cancel_rx:    Option<tokio::sync::watch::Receiver<bool>>,
+    pub cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
 #[cfg(feature = "vod")]
@@ -206,17 +214,20 @@ impl VodDownloadOptions {
 impl fmt::Debug for VodDownloadOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("VodDownloadOptions")
-         .field("output_dir",   &self.output_dir)
-         .field("output_name",  &self.output_name)
-         .field("threads",      &self.threads)
-         .field("quality",      &self.quality)
-         .field("format",       &self.format)
-         .field("start_ms",     &self.start_ms)
-         .field("end_ms",       &self.end_ms)
-         .field("buffer_ms",    &self.buffer_ms)
-         .field("progress_hook", &self.progress_hook.as_ref().map(|_| "<callback>"))
-         .field("cancel_rx",    &self.cancel_rx.as_ref().map(|_| "<receiver>"))
-         .finish()
+            .field("output_dir", &self.output_dir)
+            .field("output_name", &self.output_name)
+            .field("threads", &self.threads)
+            .field("quality", &self.quality)
+            .field("format", &self.format)
+            .field("start_ms", &self.start_ms)
+            .field("end_ms", &self.end_ms)
+            .field("buffer_ms", &self.buffer_ms)
+            .field(
+                "progress_hook",
+                &self.progress_hook.as_ref().map(|_| "<callback>"),
+            )
+            .field("cancel_rx", &self.cancel_rx.as_ref().map(|_| "<receiver>"))
+            .finish()
     }
 }
 
@@ -241,7 +252,7 @@ impl fmt::Display for Platform {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Platform::Twitch => f.write_str("twitch"),
-            Platform::Kick   => f.write_str("kick"),
+            Platform::Kick => f.write_str("kick"),
         }
     }
 }
@@ -262,28 +273,55 @@ pub struct VodInfo {
     /// Unique VOD identifier (numeric string on Twitch, UUID on Kick).
     pub vod_id: String,
     pub platform: Platform,
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub title: Option<String>,
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub username: Option<String>,
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub thumbnail_url: Option<String>,
     /// VOD start wall-clock time.
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub start_time: Option<DateTime<Utc>>,
     /// Duration in **seconds**.
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub duration: Option<i64>,
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub views: Option<i64>,
     /// Kick chatroom ID — required for Kick chat downloads.
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub chat_id: Option<i64>,
     /// The highest-quality media playlist URL (chosen by the fetcher).
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub playback_url: Option<String>,
     /// The raw master playlist URL before quality selection (fallback).
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub source: Option<String>,
 }
 
@@ -298,25 +336,49 @@ pub struct ClipInfo {
     /// Platform-specific clip identifier (slug on Twitch, ULID on Kick).
     pub clip_id: String,
     pub platform: Platform,
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub title: Option<String>,
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub username: Option<String>,
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub thumbnail_url: Option<String>,
     /// Wall-clock time when the clip was created.
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub start_time: Option<DateTime<Utc>>,
     /// Clip duration in **seconds**.
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub duration: Option<i64>,
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub views: Option<i64>,
     /// Kick chatroom ID — used when downloading clip chat.
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub chat_id: Option<i64>,
     /// Direct playback URL (MP4 for Twitch clips; M3U8 for Kick clips).
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub playback_url: Option<String>,
 }
 
@@ -326,24 +388,48 @@ pub struct ClipInfo {
 #[cfg_attr(feature = "serde-types", serde(rename_all = "camelCase"))]
 pub struct LiveInfo {
     pub platform: Platform,
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub username: Option<String>,
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub title: Option<String>,
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub thumbnail_url: Option<String>,
     /// When the current stream session started.
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub start_time: Option<DateTime<Utc>>,
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub viewer_count: Option<i64>,
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub followers: Option<i64>,
     /// Live HLS playlist URL.
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub playback_url: Option<String>,
     /// Kick chatroom ID.
-    #[cfg_attr(feature = "serde-types", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
     pub chat_id: Option<i64>,
     pub is_live: bool,
 }
@@ -434,16 +520,16 @@ impl From<TwitchOptions> for PlatformChatOptions {
 ///     .with_end_ms(120_000);
 /// ```
 pub struct ChatDownloadOptions {
-    pub output_dir:       Option<PathBuf>,
-    pub output_name:      Option<String>,
-    pub start_ms:         Option<u64>,
-    pub end_ms:           Option<u64>,
-    pub buffer_ms:        Option<u64>,
-    pub max_retries:      usize,
+    pub output_dir: Option<PathBuf>,
+    pub output_name: Option<String>,
+    pub start_ms: Option<u64>,
+    pub end_ms: Option<u64>,
+    pub buffer_ms: Option<u64>,
+    pub max_retries: usize,
     /// Platform-specific tuning. If `None`, per-platform defaults apply.
     pub platform_options: Option<PlatformChatOptions>,
-    pub progress_hook:    Option<ProgressCallback>,
-    pub cancel_rx:        Option<tokio::sync::watch::Receiver<bool>>,
+    pub progress_hook: Option<ProgressCallback>,
+    pub cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
 impl ChatDownloadOptions {
@@ -524,15 +610,15 @@ impl ChatDownloadOptions {
 impl Default for ChatDownloadOptions {
     fn default() -> Self {
         Self {
-            output_dir:       None,
-            output_name:      None,
-            start_ms:         None,
-            end_ms:           None,
-            buffer_ms:        None,
-            max_retries:      8,
+            output_dir: None,
+            output_name: None,
+            start_ms: None,
+            end_ms: None,
+            buffer_ms: None,
+            max_retries: 8,
             platform_options: None,
-            progress_hook:    None,
-            cancel_rx:        None,
+            progress_hook: None,
+            cancel_rx: None,
         }
     }
 }
@@ -540,16 +626,19 @@ impl Default for ChatDownloadOptions {
 impl fmt::Debug for ChatDownloadOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ChatDownloadOptions")
-         .field("output_dir",       &self.output_dir)
-         .field("output_name",      &self.output_name)
-         .field("start_ms",         &self.start_ms)
-         .field("end_ms",           &self.end_ms)
-         .field("buffer_ms",        &self.buffer_ms)
-         .field("max_retries",      &self.max_retries)
-         .field("platform_options", &self.platform_options)
-         .field("progress_hook",    &self.progress_hook.as_ref().map(|_| "<callback>"))
-         .field("cancel_rx",        &self.cancel_rx.as_ref().map(|_| "<receiver>"))
-         .finish()
+            .field("output_dir", &self.output_dir)
+            .field("output_name", &self.output_name)
+            .field("start_ms", &self.start_ms)
+            .field("end_ms", &self.end_ms)
+            .field("buffer_ms", &self.buffer_ms)
+            .field("max_retries", &self.max_retries)
+            .field("platform_options", &self.platform_options)
+            .field(
+                "progress_hook",
+                &self.progress_hook.as_ref().map(|_| "<callback>"),
+            )
+            .field("cancel_rx", &self.cancel_rx.as_ref().map(|_| "<receiver>"))
+            .finish()
     }
 }
 
@@ -557,49 +646,45 @@ impl fmt::Debug for ChatDownloadOptions {
 // Chat data structures (public)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
-#[derive(Deser, Ser)]
+#[derive(Debug, Clone, Deser, Ser)]
 pub struct Badge {
     #[serde(rename = "type")]
     pub kind: String,
     pub text: String,
 }
 
-#[derive(Debug, Clone)]
-#[derive(Deser, Ser)]
+#[derive(Debug, Clone, Deser, Ser)]
 pub struct Identity {
-    pub color:  String,
+    pub color: String,
     #[serde(default)]
     pub badges: Vec<Badge>,
 }
 
-#[derive(Debug, Clone)]
-#[derive(Deser, Ser)]
+#[derive(Debug, Clone, Deser, Ser)]
 pub struct Sender {
-    pub id:       i64,
-    pub slug:     String,
+    pub id: i64,
+    pub slug: String,
     pub username: String,
     pub identity: Identity,
 }
 
 /// A saved chat message with precomputed timing fields relative to both the
 /// stream start time and the downloaded range start time.
-#[derive(Debug, Clone)]
-#[derive(Deser, Ser)]
+#[derive(Debug, Clone, Deser, Ser)]
 pub struct MessageSaved {
-    pub id:               String,
-    pub chat_id:          i64,
-    pub user_id:          i64,
-    pub content:          String,
+    pub id: String,
+    pub chat_id: i64,
+    pub user_id: i64,
+    pub content: String,
     #[serde(rename = "type")]
-    pub kind:             String,
-    pub metadata:         String,
-    pub sender:           Sender,
-    pub created_at_raw:   String,
+    pub kind: String,
+    pub metadata: String,
+    pub sender: Sender,
+    pub created_at_raw: String,
     /// Seconds since stream start.
-    pub created_at_secs:  i64,
+    pub created_at_secs: i64,
     /// `"HH:MM:SS"` since stream start.
-    pub created_at_str:   String,
+    pub created_at_str: String,
     /// Seconds since the requested range start.
     pub range_offset_secs: i64,
     /// `"HH:MM:SS"` since the requested range start.
@@ -624,16 +709,16 @@ impl MessageSaved {
         }
 
         Self {
-            id:               msg.id.clone(),
-            chat_id:          msg.chat_id,
-            user_id:          msg.user_id,
-            content:          msg.content.clone(),
-            kind:             msg.kind.clone(),
-            metadata:         msg.metadata.clone(),
-            sender:           msg.sender.clone(),
-            created_at_raw:   msg.created_at.clone(),
-            created_at_secs:  total_seconds,
-            created_at_str:   fmt_hms(total_seconds),
+            id: msg.id.clone(),
+            chat_id: msg.chat_id,
+            user_id: msg.user_id,
+            content: msg.content.clone(),
+            kind: msg.kind.clone(),
+            metadata: msg.metadata.clone(),
+            sender: msg.sender.clone(),
+            created_at_raw: msg.created_at.clone(),
+            created_at_secs: total_seconds,
+            created_at_str: fmt_hms(total_seconds),
             range_offset_secs: range_seconds,
             range_offset_str: fmt_hms(range_seconds),
         }
@@ -646,14 +731,14 @@ impl MessageSaved {
 
 #[derive(Debug, Deser, Ser)]
 pub(crate) struct Message {
-    pub id:         String,
-    pub chat_id:    i64,
-    pub user_id:    i64,
-    pub content:    String,
+    pub id: String,
+    pub chat_id: i64,
+    pub user_id: i64,
+    pub content: String,
     #[serde(rename = "type")]
-    pub kind:       String,
-    pub metadata:   String,
-    pub sender:     Sender,
+    pub kind: String,
+    pub metadata: String,
+    pub sender: Sender,
     pub created_at: String,
 }
 
@@ -664,7 +749,7 @@ pub(crate) struct ChatData {
 
 #[derive(Debug, Deser, Ser)]
 pub(crate) struct ChatResponse {
-    pub data:    ChatData,
+    pub data: ChatData,
     pub message: String,
 }
 
@@ -720,14 +805,14 @@ impl Default for ChannelField {
 
 fn parse_srcset(s: &str) -> Option<String> {
     s.split(',')
-     .filter_map(|part| {
-         let mut pieces = part.trim().rsplitn(2, ' ');
-         let width = pieces.next()?.trim_end_matches('w').parse::<u32>().ok()?;
-         let url = pieces.next()?;
-         Some((width, url.to_string()))
-     })
-     .max_by_key(|(w, _)| *w)
-     .map(|(_, url)| url)
+        .filter_map(|part| {
+            let mut pieces = part.trim().rsplitn(2, ' ');
+            let width = pieces.next()?.trim_end_matches('w').parse::<u32>().ok()?;
+            let url = pieces.next()?;
+            Some((width, url.to_string()))
+        })
+        .max_by_key(|(w, _)| *w)
+        .map(|(_, url)| url)
 }
 
 /// Handles `String`, `{responsive, url, src, …}`, or `[…]` thumbnail shapes.
@@ -760,15 +845,15 @@ where
                 return Ok(best);
             }
             map.get("url")
-               .or_else(|| map.get("src"))
-               .and_then(|v| v.as_str())
-               .map(|s| s.to_string())
-               .or_else(|| {
-                   map.values()
-                      .filter_map(|v| v.as_str())
-                      .find(|s| s.starts_with("http"))
-                      .map(|s| s.to_string())
-               })
+                .or_else(|| map.get("src"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    map.values()
+                        .filter_map(|v| v.as_str())
+                        .find(|s| s.starts_with("http"))
+                        .map(|s| s.to_string())
+                })
         }
         Value::Array(arr) => arr.iter().find_map(|item| match item {
             Value::String(s) if s.starts_with("http") => Some(s.clone()),
@@ -789,39 +874,39 @@ where
 #[derive(Debug, Deser, Clone)]
 pub(crate) struct KickVideoResponse {
     #[allow(dead_code)]
-    pub uuid:        Option<String>,
-    pub views:       Option<i64>,
-    pub source:      Option<String>,
+    pub uuid: Option<String>,
+    pub views: Option<i64>,
+    pub source: Option<String>,
     #[serde(alias = "playbackUrl", default)]
     pub playback_url: Option<String>,
     #[serde(default)]
-    pub livestream:  Option<Livestream>,
+    pub livestream: Option<Livestream>,
 }
 
 #[derive(Debug, Deser, Ser, Clone, Default)]
 pub(crate) struct Livestream {
-    pub id:            Option<i64>,
+    pub id: Option<i64>,
     pub session_title: Option<String>,
-    pub start_time:    Option<String>,
-    pub duration:      Option<i64>,
+    pub start_time: Option<String>,
+    pub duration: Option<i64>,
     #[serde(deserialize_with = "deserialize_kick_thumbnail", default)]
-    pub thumbnail:     Option<String>,
+    pub thumbnail: Option<String>,
     #[serde(rename = "viewer_count", alias = "viewerCount", default)]
-    pub viewer_count:  Option<i64>,
-    pub is_live:       Option<bool>,
+    pub viewer_count: Option<i64>,
+    pub is_live: Option<bool>,
     #[serde(default)]
-    pub channel:       Option<ChannelField>,
+    pub channel: Option<ChannelField>,
 }
 
 #[derive(Debug, Deser, Clone)]
 pub(crate) struct KickChannelResponse {
-    pub id:             Option<i64>,
-    pub user:           Option<User>,
-    pub chatroom:       Option<Chatroom>,
-    pub livestream:     Option<Livestream>,
+    pub id: Option<i64>,
+    pub user: Option<User>,
+    pub chatroom: Option<Chatroom>,
+    pub livestream: Option<Livestream>,
     #[serde(rename = "followersCount", alias = "followers_count")]
     pub followers_count: Option<i64>,
-    pub playback_url:   Option<String>,
+    pub playback_url: Option<String>,
 }
 
 #[derive(Debug, Deser, Clone)]
@@ -831,27 +916,32 @@ pub(crate) struct KickClipResponse {
 
 #[derive(Debug, Deser, Clone)]
 pub(crate) struct KickClipData {
-    pub title:         Option<String>,
+    pub title: Option<String>,
     pub thumbnail_url: Option<String>,
-    pub views:         Option<i64>,
-    pub channel_id:    Option<i64>,
+    pub views: Option<i64>,
+    pub channel_id: Option<i64>,
     /// Duration in **seconds** as returned by the Kick API.
-    pub duration:      Option<f64>,
-    pub started_at:    Option<String>,
-    pub created_at:    Option<String>,
-    pub video_url:     Option<String>,
-    pub channel:       Option<KickClipChannel>,
+    pub duration: Option<f64>,
+    pub started_at: Option<String>,
+    pub created_at: Option<String>,
+    pub video_url: Option<String>,
+    pub channel: Option<KickClipChannel>,
 }
 
 #[derive(Debug, Deser, Clone)]
 pub(crate) struct KickClipChannel {
-    pub id:       Option<i64>,
+    pub id: Option<i64>,
     pub username: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
 // Twitch GraphQL types
 // ---------------------------------------------------------------------------
+
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct SimpleGqlQuery {
+    pub(crate) query: String,
+}
 
 #[derive(Debug, Deser)]
 pub(crate) struct TwitchGqlClipResponse {
@@ -867,8 +957,8 @@ pub(crate) struct TwitchGqlClipData {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TwitchGqlClip {
     pub video_offset_seconds: Option<f64>,
-    pub duration_seconds:     Option<f64>,
-    pub video:                Option<TwitchGqlVideoId>,
+    pub duration_seconds: Option<f64>,
+    pub video: Option<TwitchGqlVideoId>,
 }
 
 #[derive(Debug, Deser)]
@@ -894,7 +984,7 @@ pub(crate) struct TwitchGqlVideo {
 #[derive(Debug, Deser)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TwitchGqlCommentsConnection {
-    pub edges:     Option<Vec<TwitchGqlCommentEdge>>,
+    pub edges: Option<Vec<TwitchGqlCommentEdge>>,
     pub page_info: Option<TwitchGqlPageInfo>,
 }
 
@@ -902,24 +992,24 @@ pub(crate) struct TwitchGqlCommentsConnection {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TwitchGqlCommentEdge {
     pub cursor: Option<String>,
-    pub node:   Option<TwitchGqlCommentNode>,
+    pub node: Option<TwitchGqlCommentNode>,
 }
 
 #[derive(Debug, Deser)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TwitchGqlCommentNode {
-    pub id:                     Option<String>,
+    pub id: Option<String>,
     pub content_offset_seconds: Option<f64>,
-    pub message:                Option<TwitchGqlCommentMessage>,
-    pub commenter:              Option<TwitchGqlCommenter>,
+    pub message: Option<TwitchGqlCommentMessage>,
+    pub commenter: Option<TwitchGqlCommenter>,
 }
 
 #[derive(Debug, Deser)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TwitchGqlCommentMessage {
     pub user_badges: Option<Vec<TwitchGqlUserBadge>>,
-    pub user_color:  Option<String>,
-    pub fragments:   Option<Vec<TwitchGqlMessageFragment>>,
+    pub user_color: Option<String>,
+    pub fragments: Option<Vec<TwitchGqlMessageFragment>>,
 }
 
 #[derive(Debug, Deser)]
@@ -937,8 +1027,8 @@ pub(crate) struct TwitchGqlMessageFragment {
 #[derive(Debug, Deser)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TwitchGqlCommenter {
-    pub id:           Option<String>,
-    pub login:        Option<String>,
+    pub id: Option<String>,
+    pub login: Option<String>,
     pub display_name: Option<String>,
 }
 
@@ -952,17 +1042,17 @@ pub(crate) struct TwitchGqlPageInfo {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TwitchGqlRequest<'a> {
     pub operation_name: &'static str,
-    pub variables:      TwitchGqlVariables<'a>,
-    pub extensions:     TwitchGqlExtensions,
+    pub variables: TwitchGqlVariables<'a>,
+    pub extensions: TwitchGqlExtensions,
 }
 
 #[derive(Ser)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TwitchGqlVariables<'a> {
     #[serde(rename = "videoID")]
-    pub video_id:               &'a str,
+    pub video_id: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cursor:                 Option<&'a str>,
+    pub cursor: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_offset_seconds: Option<i64>,
 }
@@ -976,7 +1066,7 @@ pub(crate) struct TwitchGqlExtensions {
 #[derive(Ser)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PersistedQuery {
-    pub version:     u32,
+    pub version: u32,
     pub sha256_hash: &'static str,
 }
 
@@ -993,15 +1083,15 @@ pub(crate) struct TwitchClipQueryData {
 #[derive(Debug, Deser)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TwitchClipDetails {
-    pub title:                  Option<String>,
-    pub duration_seconds:       Option<i64>,
-    pub view_count:             Option<i64>,
-    pub created_at:             Option<String>,
+    pub title: Option<String>,
+    pub duration_seconds: Option<i64>,
+    pub view_count: Option<i64>,
+    pub created_at: Option<String>,
     #[serde(rename = "thumbnailURL")]
-    pub thumbnail_url:          Option<String>,
-    pub broadcaster:            Option<TwitchBroadcaster>,
-    pub video_qualities:        Option<Vec<TwitchVideoQuality>>,
-    pub playback_access_token:  Option<TwitchPlaybackAccessToken>,
+    pub thumbnail_url: Option<String>,
+    pub broadcaster: Option<TwitchBroadcaster>,
+    pub video_qualities: Option<Vec<TwitchVideoQuality>>,
+    pub playback_access_token: Option<TwitchPlaybackAccessToken>,
 }
 
 #[derive(Debug, Deser)]
@@ -1018,5 +1108,5 @@ pub(crate) struct TwitchVideoQuality {
 #[derive(Debug, Deser)]
 pub(crate) struct TwitchPlaybackAccessToken {
     pub signature: Option<String>,
-    pub value:     Option<String>,
+    pub value: Option<String>,
 }

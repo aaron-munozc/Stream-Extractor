@@ -89,7 +89,7 @@ impl Stream {
     /// The platform this stream belongs to.
     pub fn platform(&self) -> &Platform {
         match self {
-            Stream::Vod(v)  => &v.platform,
+            Stream::Vod(v) => &v.platform,
             Stream::Clip(c) => &c.platform,
             Stream::Live(l) => &l.platform,
         }
@@ -97,42 +97,72 @@ impl Stream {
 
     /// Borrow the inner [`VodInfo`], if this is a VOD.
     pub fn as_vod(&self) -> Option<&VodInfo> {
-        if let Stream::Vod(v) = self { Some(v) } else { None }
+        if let Stream::Vod(v) = self {
+            Some(v)
+        } else {
+            None
+        }
     }
 
     /// Borrow the inner [`ClipInfo`], if this is a clip.
     pub fn as_clip(&self) -> Option<&ClipInfo> {
-        if let Stream::Clip(c) = self { Some(c) } else { None }
+        if let Stream::Clip(c) = self {
+            Some(c)
+        } else {
+            None
+        }
     }
 
     /// Borrow the inner [`LiveInfo`], if this is a live channel.
     pub fn as_live(&self) -> Option<&LiveInfo> {
-        if let Stream::Live(l) = self { Some(l) } else { None }
+        if let Stream::Live(l) = self {
+            Some(l)
+        } else {
+            None
+        }
     }
 
     /// Consume into the inner [`VodInfo`].
     pub fn into_vod(self) -> Option<VodInfo> {
-        if let Stream::Vod(v) = self { Some(v) } else { None }
+        if let Stream::Vod(v) = self {
+            Some(v)
+        } else {
+            None
+        }
     }
 
     /// Consume into the inner [`ClipInfo`].
     pub fn into_clip(self) -> Option<ClipInfo> {
-        if let Stream::Clip(c) = self { Some(c) } else { None }
+        if let Stream::Clip(c) = self {
+            Some(c)
+        } else {
+            None
+        }
     }
 
     /// Consume into the inner [`LiveInfo`].
     pub fn into_live(self) -> Option<LiveInfo> {
-        if let Stream::Live(l) = self { Some(l) } else { None }
+        if let Stream::Live(l) = self {
+            Some(l)
+        } else {
+            None
+        }
     }
 
     /// Returns `true` if this is a [`Stream::Vod`].
-    pub fn is_vod(&self) -> bool { matches!(self, Stream::Vod(_)) }
+    pub fn is_vod(&self) -> bool {
+        matches!(self, Stream::Vod(_))
+    }
 
     /// Returns `true` if this is a [`Stream::Clip`].
-    pub fn is_clip(&self) -> bool { matches!(self, Stream::Clip(_)) }
+    pub fn is_clip(&self) -> bool {
+        matches!(self, Stream::Clip(_))
+    }
 
     /// Returns `true` if this is a [`Stream::Live`].
-    pub fn is_live(&self) -> bool { matches!(self, Stream::Live(_)) }
+    pub fn is_live(&self) -> bool {
+        matches!(self, Stream::Live(_))
+    }
 }
 
 // ---------------------------------------------------------------------------

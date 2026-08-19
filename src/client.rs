@@ -1,14 +1,16 @@
 use std::sync::Arc;
 
 use crate::error::Result;
-use crate::http::{header::{HeaderMap, HeaderValue}, Client, ClientBuilder, Jar};
+use crate::http::{
+    Client, ClientBuilder, Jar,
+    header::{HeaderMap, HeaderValue},
+};
 
 // ---------------------------------------------------------------------------
 // Default Configuration Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_USER_AGENT: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
 const DEFAULT_ACCEPT: &str =
     "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8";
@@ -84,8 +86,8 @@ impl Default for StreamClient {
 impl std::fmt::Debug for StreamClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StreamClient")
-         .field("cookie_jar", &self.cookie_jar)
-         .finish_non_exhaustive()
+            .field("cookie_jar", &self.cookie_jar)
+            .finish_non_exhaustive()
     }
 }
 

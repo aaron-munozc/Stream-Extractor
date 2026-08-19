@@ -13,15 +13,15 @@ use crate::client::StreamClient;
 use crate::error::{Error, Result};
 use crate::types::{
     ChatDownloadOptions, ChatResponse, ClipInfo, MessageSaved, PersistedQuery, Platform,
-    TwitchGqlClipResponse, TwitchGqlCommentsResponse, TwitchGqlExtensions, TwitchGqlRequest,
-    TwitchGqlVariables, VodInfo,
+    SimpleGqlQuery, TwitchGqlClipResponse, TwitchGqlCommentsResponse, TwitchGqlExtensions,
+    TwitchGqlRequest, TwitchGqlVariables, VodInfo,
 };
 
-const TWITCH_GQL_CLIENT_ID:  &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
+const TWITCH_GQL_CLIENT_ID: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
 const TWITCH_CHAT_CLIENT_ID: &str = "kd1unb4b3q4t58fwlpcbzcbnm76a8fp";
 
 const SAVE_CHANNEL_CAPACITY: usize = 4096;
-const KICK_STEP_SECS:        i64   = 5;
+const KICK_STEP_SECS: i64 = 5;
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -55,7 +55,13 @@ async fn fetch_json_with_retries(
     loop {
         check_cancel(cancel_rx)?;
 
-        match client.inner.get(url).header("Accept", "application/json").send().await {
+        match client
+            .inner
+            .get(url)
+            .header("Accept", "application/json")
+            .send()
+            .await
+        {
             Ok(resp) => {
                 let status = resp.status();
                 if status.as_u16() == 429 {
@@ -93,7 +99,7 @@ async fn fetch_json_with_retries(
         tokio::time::sleep(std::time::Duration::from_millis(
             (backoff + jitter).min(10_000),
         ))
-            .await;
+        .await;
     }
 }
 
@@ -157,8 +163,7 @@ fn spawn_writer_task(
         };
         let mut buf = AsyncBufWriter::new(file);
         while let Some(line) = rx.recv().await {
-            if buf.write_all(line.as_bytes()).await.is_err()
-                || buf.write_all(b"\n").await.is_err()
+            if buf.write_all(line.as_bytes()).await.is_err() || buf.write_all(b"\n").await.is_err()
             {
                 break;
             }
@@ -203,7 +208,9 @@ async fn download_twitch_chat_inner(
     };
 
     let report = |payload: ProgressPayload| {
-        if let Some(ref hook) = options.progress_hook { hook(payload); }
+        if let Some(ref hook) = options.progress_hook {
+            hook(payload);
+        }
     };
 
     loop {
@@ -218,7 +225,7 @@ async fn download_twitch_chat_inner(
             },
             extensions: TwitchGqlExtensions {
                 persisted_query: PersistedQuery {
-                    version:     1,
+                    version: 1,
                     sha256_hash: "b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044aa76adf6a",
                 },
             },
@@ -291,12 +298,12 @@ async fn download_twitch_chat_inner(
                             let set_id = b.set_id.clone().unwrap_or_default();
                             let text = match set_id.as_str() {
                                 "broadcaster" => "👑",
-                                "moderator"   => "⚔",
-                                "subscriber"  => "★",
-                                "staff"       => "⛨",
-                                _             => "",
+                                "moderator" => "⚔",
+                                "subscriber" => "★",
+                                "staff" => "⛨",
+                                _ => "",
                             }
-                                .to_string();
+                            .to_string();
                             badges.push(crate::types::Badge { kind: set_id, text });
                         }
                     }
@@ -329,27 +336,27 @@ async fn download_twitch_chat_inner(
                     .unwrap_or_else(|| commenter_login.clone());
 
                 let msg = crate::types::Message {
-                    id:      msg_id,
+                    id: msg_id,
                     chat_id: video_id.parse().unwrap_or_else(|_| {
                         log::warn!("Failed to parse chat ID from video ID, defaulting to 0");
                         0
                     }),
-                    user_id:  commenter_id,
+                    user_id: commenter_id,
                     content,
-                    kind:     "chat".into(),
+                    kind: "chat".into(),
                     metadata: String::new(),
                     sender: crate::types::Sender {
-                        id:       commenter_id,
-                        slug:     commenter_login,
+                        id: commenter_id,
+                        slug: commenter_login,
                         username: commenter_name,
                         identity: crate::types::Identity {
-                            color:  user_color,
+                            color: user_color,
                             badges,
                         },
                     },
                     created_at: (stream_start
                         + ChronoDuration::milliseconds(absolute_msg_ms as i64))
-                        .to_rfc3339(),
+                    .to_rfc3339(),
                 };
 
                 let _ = tx
@@ -379,7 +386,7 @@ async fn download_twitch_chat_inner(
             if has_next {
                 match edges.last().and_then(|e| e.cursor.as_ref()) {
                     Some(c) => cursor = Some(c.clone()),
-                    None    => break,
+                    None => break,
                 }
             } else {
                 break;
@@ -414,7 +421,9 @@ async fn download_kick_chat_inner(
     let kick_opts = options.kick_options();
 
     let report = |payload: ProgressPayload| {
-        if let Some(ref hook) = options.progress_hook { hook(payload); }
+        if let Some(ref hook) = options.progress_hook {
+            hook(payload);
+        }
     };
 
     loop {
@@ -442,9 +451,9 @@ async fn download_kick_chat_inner(
                 let mut url = Url::parse(&format!(
                     "https://web.kick.com/api/v1/chat/{chat_id}/history"
                 ))
-                    .expect("static URL is valid");
+                .expect("static URL is valid");
                 url.query_pairs_mut()
-                   .append_pair("start_time", &to_kick_timestamp(*st));
+                    .append_pair("start_time", &to_kick_timestamp(*st));
                 let url_str = url.to_string();
                 let cancel_rx = options.cancel_rx.clone();
                 let cl = client.clone();
@@ -489,8 +498,8 @@ async fn download_kick_chat_inner(
         next_start = candidate;
 
         if window_length_ms > 0 {
-            let elapsed = (next_start - stream_start).num_milliseconds() as f64
-                - start_offset_ms as f64;
+            let elapsed =
+                (next_start - stream_start).num_milliseconds() as f64 - start_offset_ms as f64;
             let pct = (elapsed / window_length_ms as f64 * 100.0).clamp(0.0, 100.0);
             report(ProgressPayload::Downloading {
                 percent: pct as u8,
@@ -539,7 +548,9 @@ pub(crate) async fn download_vod_chat(
     options: ChatDownloadOptions,
 ) -> Result<PathBuf> {
     let report = |payload: ProgressPayload| {
-        if let Some(ref hook) = options.progress_hook { hook(payload); }
+        if let Some(ref hook) = options.progress_hook {
+            hook(payload);
+        }
     };
 
     report(ProgressPayload::Downloading {
@@ -547,15 +558,24 @@ pub(crate) async fn download_vod_chat(
         message: "Initializing chat download...".into(),
     });
 
-    let stream_start      = vod.start_time.unwrap_or_else(Utc::now);
-    let duration_ms       = vod.duration.unwrap_or(0) as u64 * 1000;
-    let start_offset_ms   = options.start_ms.unwrap_or(0);
-    let buffer            = options.buffer_ms.unwrap_or(0);
-    let effective_end_ms  = options.end_ms.map(|e| e + buffer).unwrap_or_else(|| {
-        if duration_ms > 0 { duration_ms + buffer } else { 0 }
+    let stream_start = vod.start_time.unwrap_or_else(Utc::now);
+    let duration_ms = vod.duration.unwrap_or(0) as u64 * 1000;
+    let start_offset_ms = options.start_ms.unwrap_or(0);
+    let buffer = options.buffer_ms.unwrap_or(0);
+    let effective_end_ms = options.end_ms.map(|e| e + buffer).unwrap_or_else(|| {
+        if duration_ms > 0 {
+            duration_ms + buffer
+        } else {
+            0
+        }
     });
 
-    let final_path = resolve_output_path(&options, &vod.platform, vod.username.as_deref(), &vod.vod_id)?;
+    let final_path = resolve_output_path(
+        &options,
+        &vod.platform,
+        vod.username.as_deref(),
+        &vod.vod_id,
+    )?;
     if let Some(parent) = final_path.parent() {
         async_fs::create_dir_all(parent).await?;
     }
@@ -567,18 +587,33 @@ pub(crate) async fn download_vod_chat(
     match vod.platform {
         Platform::Twitch => {
             download_twitch_chat_inner(
-                client, &vod.vod_id, 0.0, 0.0,
-                stream_start, start_offset_ms, effective_end_ms, buffer,
-                &options, tx, &mut seen_msg_ids,
-            ).await?;
+                client,
+                &vod.vod_id,
+                0.0,
+                0.0,
+                stream_start,
+                start_offset_ms,
+                effective_end_ms,
+                buffer,
+                &options,
+                tx,
+                &mut seen_msg_ids,
+            )
+            .await?;
         }
         Platform::Kick => {
             let chat_id = vod.chat_id.ok_or(Error::MissingId)?;
             download_kick_chat_inner(
-                client, chat_id,
-                stream_start, start_offset_ms, effective_end_ms,
-                &options, tx, &mut seen_msg_ids,
-            ).await?;
+                client,
+                chat_id,
+                stream_start,
+                start_offset_ms,
+                effective_end_ms,
+                &options,
+                tx,
+                &mut seen_msg_ids,
+            )
+            .await?;
         }
     }
 
@@ -596,7 +631,9 @@ pub(crate) async fn download_clip_chat(
     options: ChatDownloadOptions,
 ) -> Result<PathBuf> {
     let report = |payload: ProgressPayload| {
-        if let Some(ref hook) = options.progress_hook { hook(payload); }
+        if let Some(ref hook) = options.progress_hook {
+            hook(payload);
+        }
     };
 
     report(ProgressPayload::Downloading {
@@ -604,11 +641,16 @@ pub(crate) async fn download_clip_chat(
         message: "Initializing clip chat download...".into(),
     });
 
-    let stream_start    = clip.start_time.unwrap_or_else(Utc::now);
+    let stream_start = clip.start_time.unwrap_or_else(Utc::now);
     let start_offset_ms = options.start_ms.unwrap_or(0);
-    let buffer          = options.buffer_ms.unwrap_or(0);
+    let buffer = options.buffer_ms.unwrap_or(0);
 
-    let final_path = resolve_output_path(&options, &clip.platform, clip.username.as_deref(), &clip.clip_id)?;
+    let final_path = resolve_output_path(
+        &options,
+        &clip.platform,
+        clip.username.as_deref(),
+        &clip.clip_id,
+    )?;
     if let Some(parent) = final_path.parent() {
         async_fs::create_dir_all(parent).await?;
     }
@@ -624,12 +666,12 @@ pub(crate) async fn download_clip_chat(
                 message: "Resolving Twitch clip to parent VOD...".into(),
             });
 
-            let clip_query = serde_json::json!({
-                "query": format!(
+            let clip_query = SimpleGqlQuery {
+                query: format!(
                     "query{{clip(slug:\"{}\"){{videoOffsetSeconds,durationSeconds,video{{id}}}}}}",
                     clip.clip_id
-                )
-            });
+                ),
+            };
 
             let parsed: TwitchGqlClipResponse = client
                 .inner
@@ -641,44 +683,57 @@ pub(crate) async fn download_clip_chat(
                 .json()
                 .await?;
 
-            let clip_node = parsed
-                .data
-                .and_then(|d| d.clip)
-                .ok_or_else(|| Error::InvalidUrl("Invalid Twitch clip slug or API error.".into()))?;
+            let clip_node = parsed.data.and_then(|d| d.clip).ok_or_else(|| {
+                Error::InvalidUrl("Invalid Twitch clip slug or API error.".into())
+            })?;
 
             let video_id = clip_node
                 .video
                 .and_then(|v| v.id)
                 .ok_or_else(|| Error::InvalidUrl("Clip has no associated VOD.".into()))?;
 
-            let clip_offset_sec   = clip_node.video_offset_seconds.unwrap_or(0.0);
+            let clip_offset_sec = clip_node.video_offset_seconds.unwrap_or(0.0);
             let clip_duration_sec = clip_node.duration_seconds.unwrap_or(0.0);
-            let effective_end_ms  = options
+            let effective_end_ms = options
                 .end_ms
                 .map(|e| e + buffer)
                 .unwrap_or_else(|| (clip_duration_sec * 1000.0) as u64 + buffer);
 
             download_twitch_chat_inner(
-                client, &video_id,
-                clip_offset_sec, clip_duration_sec,
-                stream_start, start_offset_ms, effective_end_ms, buffer,
-                &options, tx, &mut seen_msg_ids,
-            ).await?;
+                client,
+                &video_id,
+                clip_offset_sec,
+                clip_duration_sec,
+                stream_start,
+                start_offset_ms,
+                effective_end_ms,
+                buffer,
+                &options,
+                tx,
+                &mut seen_msg_ids,
+            )
+            .await?;
         }
 
         Platform::Kick => {
-            let chat_id        = clip.chat_id.ok_or(Error::MissingId)?;
-            let clip_dur_ms    = clip.duration.unwrap_or(0) as u64 * 1000;
+            let chat_id = clip.chat_id.ok_or(Error::MissingId)?;
+            let clip_dur_ms = clip.duration.unwrap_or(0) as u64 * 1000;
             let effective_end_ms = options
                 .end_ms
                 .map(|e| e + buffer)
                 .unwrap_or(clip_dur_ms + buffer);
 
             download_kick_chat_inner(
-                client, chat_id,
-                stream_start, start_offset_ms, effective_end_ms,
-                &options, tx, &mut seen_msg_ids,
-            ).await?;
+                client,
+                chat_id,
+                stream_start,
+                start_offset_ms,
+                effective_end_ms,
+                &options,
+                tx,
+                &mut seen_msg_ids,
+            )
+            .await?;
         }
     }
 

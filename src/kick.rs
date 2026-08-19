@@ -1,14 +1,14 @@
 use crate::http::{
-    header::{ACCEPT, REFERER},
     StatusCode,
+    header::{ACCEPT, REFERER},
 };
 use url::Url;
 
 use crate::client::StreamClient;
 use crate::error::Result;
 use crate::types::{
-    parse_datetime, ChannelField, ClipInfo, KickChannelResponse, KickClipResponse,
-    KickVideoResponse, LiveInfo, Platform, VodInfo,
+    ChannelField, ClipInfo, KickChannelResponse, KickClipResponse, KickVideoResponse, LiveInfo,
+    Platform, VodInfo, parse_datetime,
 };
 
 // ----------------- URL Parser -----------------
@@ -141,11 +141,7 @@ pub(crate) async fn fetch_kick_clip_api(
     };
 
     let username = clip.channel.as_ref().and_then(|c| c.username.clone());
-    let chat_id = clip
-        .channel
-        .as_ref()
-        .and_then(|c| c.id)
-        .or(clip.channel_id);
+    let chat_id = clip.channel.as_ref().and_then(|c| c.id).or(clip.channel_id);
 
     Ok(Some(ClipInfo {
         clip_id: clip_id.to_string(),
@@ -184,7 +180,12 @@ pub(crate) async fn fetch_kick_channel_api(
     let is_live = parsed.livestream.is_some();
 
     let (title, start_time, viewer_count, thumbnail_url) = if let Some(ls) = parsed.livestream {
-        (ls.session_title, ls.start_time, ls.viewer_count, ls.thumbnail)
+        (
+            ls.session_title,
+            ls.start_time,
+            ls.viewer_count,
+            ls.thumbnail,
+        )
     } else {
         (None, None, None, None)
     };

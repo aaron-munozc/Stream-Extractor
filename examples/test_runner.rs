@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use stream_extractor::{
-    download_clip_chat, download_vod_chat, fetch_stream, ChatDownloadOptions, ProgressCallback,
-    ProgressPayload, Stream, StreamClient,
+    ChatDownloadOptions, ProgressCallback, ProgressPayload, Stream, StreamClient,
+    download_clip_chat, download_vod_chat, fetch_stream,
 };
 
 #[cfg(feature = "vod")]
-use stream_extractor::{download_clip_video, download_vod_video, VodDownloadOptions};
+use stream_extractor::{VodDownloadOptions, download_clip_video, download_vod_video};
 
 struct TestCase {
     name: &'static str,
@@ -21,7 +21,7 @@ struct TestCase {
 // Holds the isolated results of each test phase
 struct TestReport {
     name: String,
-    metadata_res: Result<String, String>,  // Ok(Platform) or Err(Reason)
+    metadata_res: Result<String, String>, // Ok(Platform) or Err(Reason)
     chat_res: Option<Result<u64, String>>, // Ok(Bytes) or Err(Reason)
 
     #[cfg(feature = "vod")]
@@ -65,6 +65,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             start_ms: None,
             end_ms: None,
         },
+        TestCase {
+            name: "Twitch Live",
+            url: "https://www.twitch.tv/masondota2",
+            start_ms: None,
+            end_ms: None,
+        },
+        TestCase {
+            name: "Kick Live",
+            url: "https://kick.com/parkerdota",
+            start_ms: None,
+            end_ms: None,
+        },
     ];
 
     print_header();
@@ -83,9 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Determine exit code based on the presence of ANY errors in the reports
     let has_failures = reports.iter().any(|r| {
-        r.metadata_res.is_err()
-            || r.chat_res.as_ref().map_or(false, |res| res.is_err())
-            || {
+        r.metadata_res.is_err() || r.chat_res.as_ref().map_or(false, |res| res.is_err()) || {
             #[cfg(feature = "vod")]
             {
                 r.video_res.as_ref().map_or(false, |res| res.is_err())
@@ -155,7 +165,7 @@ async fn execute_test(client: &StreamClient, out_dir: &Path, test: &TestCase) ->
                 println!("\n  ✅ Chat Written: {}", format_bytes(size));
                 Ok(size)
             }
-                .await;
+            .await;
 
             if let Err(ref e) = res {
                 println!("\n  ❌ Chat Error: {}", e);
@@ -184,7 +194,7 @@ async fn execute_test(client: &StreamClient, out_dir: &Path, test: &TestCase) ->
                 println!("\n  ✅ Chat Written: {}", format_bytes(size));
                 Ok(size)
             }
-                .await;
+            .await;
 
             if let Err(ref e) = res {
                 println!("\n  ❌ Chat Error: {}", e);
@@ -227,7 +237,7 @@ async fn execute_test(client: &StreamClient, out_dir: &Path, test: &TestCase) ->
                 println!("\n  ✅ Video Written: {}", format_bytes(size));
                 Ok(size)
             }
-                .await;
+            .await;
 
             if let Err(ref e) = res {
                 println!("\n  ❌ Video Error: {}", e);
@@ -257,7 +267,7 @@ async fn execute_test(client: &StreamClient, out_dir: &Path, test: &TestCase) ->
                 println!("\n  ✅ Video Written: {}", format_bytes(size));
                 Ok(size)
             }
-                .await;
+            .await;
 
             if let Err(ref e) = res {
                 println!("\n  ❌ Video Error: {}", e);
