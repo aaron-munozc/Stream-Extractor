@@ -388,6 +388,14 @@ pub struct ClipInfo {
 #[cfg_attr(feature = "serde-types", serde(rename_all = "camelCase"))]
 pub struct LiveInfo {
     pub platform: Platform,
+
+    // Universal channel/broadcaster ID (String for all platforms)
+    #[cfg_attr(
+        feature = "serde-types",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
+    pub channel_id: Option<String>,
+
     #[cfg_attr(
         feature = "serde-types",
         serde(skip_serializing_if = "Option::is_none")
@@ -425,12 +433,13 @@ pub struct LiveInfo {
         serde(skip_serializing_if = "Option::is_none")
     )]
     pub playback_url: Option<String>,
-    /// Kick chatroom ID.
+
+    // Universal chat routing ID (String for all platforms)
     #[cfg_attr(
         feature = "serde-types",
         serde(skip_serializing_if = "Option::is_none")
     )]
-    pub chat_id: Option<i64>,
+    pub chat_id: Option<String>,
     pub is_live: bool,
 }
 

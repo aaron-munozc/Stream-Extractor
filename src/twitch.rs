@@ -494,8 +494,9 @@ pub(crate) async fn fetch_twitch_live_metadata(
         (None, None, None, None)
     };
 
-    // 2. Parse the chat_id (Twitch internal User ID)
-    let chat_id = user.id.and_then(|id_str| id_str.parse::<i64>().ok());
+    // technically more of a channel_id
+    let channel_id = user.id.clone();
+    let chat_id = user.id;
 
     // 3. Construct the Usher playback URL using the root-level GQL signature and token
     let playback_url = data.stream_playback_access_token.map(|token| {
@@ -513,6 +514,7 @@ pub(crate) async fn fetch_twitch_live_metadata(
 
     Ok(Some(LiveInfo {
         platform: Platform::Twitch,
+        channel_id,
         username,
         title,
         thumbnail_url,

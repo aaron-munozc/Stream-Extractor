@@ -190,8 +190,18 @@ pub(crate) async fn fetch_kick_channel_api(
         (None, None, None, None)
     };
 
+    // Convert the numeric Kick IDs into Strings
+    let channel_id = parsed.id.map(|id| id.to_string());
+
+    let chat_id = parsed
+        .chatroom
+        .and_then(|c| c.id)
+        .or(parsed.id)
+        .map(|id| id.to_string());
+
     Ok(Some(LiveInfo {
         platform: Platform::Kick,
+        channel_id,
         username: parsed
             .user
             .as_ref()
@@ -203,7 +213,7 @@ pub(crate) async fn fetch_kick_channel_api(
         viewer_count,
         followers: parsed.followers_count,
         playback_url: parsed.playback_url,
-        chat_id: parsed.chatroom.and_then(|c| c.id).or(parsed.id),
+        chat_id,
         is_live,
     }))
 }
