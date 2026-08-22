@@ -310,7 +310,7 @@ pub struct VodInfo {
         feature = "serde-types",
         serde(skip_serializing_if = "Option::is_none")
     )]
-    pub chat_id: Option<i64>,
+    pub chat_id: Option<String>,
     /// The highest-quality media playlist URL (chosen by the fetcher).
     #[cfg_attr(
         feature = "serde-types",
@@ -373,7 +373,7 @@ pub struct ClipInfo {
         feature = "serde-types",
         serde(skip_serializing_if = "Option::is_none")
     )]
-    pub chat_id: Option<i64>,
+    pub chat_id: Option<String>,
     /// Direct playback URL (MP4 for Twitch clips; M3U8 for Kick clips).
     #[cfg_attr(
         feature = "serde-types",

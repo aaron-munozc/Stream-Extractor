@@ -92,11 +92,15 @@ pub(crate) async fn fetch_kick_video_api(
             match ch_field {
                 ChannelField::Obj(ch) => {
                     info.username = ch.user.and_then(|u| u.username).or(ch.slug);
-                    info.chat_id = ch.chatroom.and_then(|c| c.id).or(ch.id);
+                    info.chat_id = ch
+                        .chatroom
+                        .and_then(|c| c.id)
+                        .or(ch.id)
+                        .map(|id| id.to_string());
                     channel_live_fallback_url = ch.playback_url;
                 }
                 ChannelField::Id(id) => {
-                    info.chat_id = Some(id);
+                    info.chat_id = Some(id.to_string());
                 }
             }
         }
@@ -141,7 +145,13 @@ pub(crate) async fn fetch_kick_clip_api(
     };
 
     let username = clip.channel.as_ref().and_then(|c| c.username.clone());
-    let chat_id = clip.channel.as_ref().and_then(|c| c.id).or(clip.channel_id);
+
+    let chat_id = clip
+        .channel
+        .as_ref()
+        .and_then(|c| c.id)
+        .or(clip.channel_id)
+        .map(|id| id.to_string());
 
     Ok(Some(ClipInfo {
         clip_id: clip_id.to_string(),

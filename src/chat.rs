@@ -405,7 +405,7 @@ async fn download_twitch_chat_inner(
 
 async fn download_kick_chat_inner(
     client: &StreamClient,
-    chat_id: i64,
+    chat_id: &str,
     stream_start: DateTime<Utc>,
     start_offset_ms: u64,
     effective_end_ms: u64,
@@ -602,7 +602,7 @@ pub(crate) async fn download_vod_chat(
             .await?;
         }
         Platform::Kick => {
-            let chat_id = vod.chat_id.ok_or(Error::MissingId)?;
+            let chat_id = vod.chat_id.as_deref().ok_or(Error::MissingId)?;
             download_kick_chat_inner(
                 client,
                 chat_id,
@@ -716,7 +716,7 @@ pub(crate) async fn download_clip_chat(
         }
 
         Platform::Kick => {
-            let chat_id = clip.chat_id.ok_or(Error::MissingId)?;
+            let chat_id = clip.chat_id.as_deref().ok_or(Error::MissingId)?;
             let clip_dur_ms = clip.duration.unwrap_or(0) as u64 * 1000;
             let effective_end_ms = options
                 .end_ms
